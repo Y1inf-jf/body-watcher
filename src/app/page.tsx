@@ -73,7 +73,7 @@ export default function DashboardPage() {
         <h3 className="text-sm font-medium text-zinc-400 mb-3">近期训练</h3>
         <div className="space-y-2">
           {data.recentTrainings.map((log) => (
-            <PlanCard key={log.id as number} log={log as Parameters<typeof PlanCard>[0]["log"]} />
+            <PlanCard key={log.id as number} log={log as unknown as Parameters<typeof PlanCard>[0]["log"]} />
           ))}
         </div>
       </div>
