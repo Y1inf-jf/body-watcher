@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "mcp__tavily__tavily_search",
+      "Bash(npx create-next-app@latest *)"
+    ]
+  }
+}
