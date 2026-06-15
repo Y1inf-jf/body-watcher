@@ -99,8 +99,8 @@ export default function PlanPage() {
           <p className="text-zinc-600 text-sm">暂无训练计划</p>
         ) : (
           <div className="space-y-4">
-            {plans.map((plan) => (
-              <PlanHistoryCard key={plan.id} plan={plan} />
+            {plans.map((plan, i) => (
+              <PlanHistoryCard key={plan.id} plan={plan} defaultExpanded={i === 0} />
             ))}
           </div>
         )}
@@ -109,8 +109,8 @@ export default function PlanPage() {
   );
 }
 
-function PlanHistoryCard({ plan }: { plan: Plan }) {
-  const [expanded, setExpanded] = useState(false);
+function PlanHistoryCard({ plan, defaultExpanded = false }: { plan: Plan; defaultExpanded?: boolean }) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
 
   let exercises: { name: string; muscle_group: string; sets: number; reps: number; weight: number }[] = [];
   try {
@@ -135,32 +135,36 @@ function PlanHistoryCard({ plan }: { plan: Plan }) {
       </div>
       {expanded && (
         <div className="mt-3 space-y-3">
-          <div>
+          <div className="border-l-2 border-blue-500 pl-3">
             <div className="text-xs text-zinc-500 mb-1">分析摘要</div>
             <div className="text-sm text-zinc-300">{plan.analysis_summary}</div>
           </div>
-          <div>
+          <div className="border-l-2 border-amber-500 pl-3">
             <div className="text-xs text-zinc-500 mb-1">恢复评估</div>
             <div className="text-sm text-zinc-300">{plan.recovery_assessment}</div>
           </div>
           {exercises.length > 0 && (
             <div>
-              <div className="text-xs text-zinc-500 mb-1">训练动作</div>
-              <div className="space-y-1">
+              <div className="text-xs text-zinc-500 mb-2">训练动作</div>
+              <div className="space-y-2">
                 {exercises.map((ex, i) => (
-                  <div key={i} className="text-sm text-zinc-300">
-                    <span className="text-zinc-500 text-xs mr-2">[{ex.muscle_group}]</span>
-                    {ex.name}
-                    <span className="text-zinc-500 ml-2">
-                      {ex.sets}x{ex.reps} @{ex.weight}kg
-                    </span>
+                  <div key={i} className="bg-zinc-800/50 border border-zinc-700/50 rounded p-2">
+                    <div className="text-sm text-zinc-200">
+                      <span className="text-zinc-500 text-xs mr-2">[{ex.muscle_group}]</span>
+                      <span className="font-medium">{ex.name}</span>
+                      <span className="text-zinc-500 text-xs ml-2">{ex.sets}组</span>
+                    </div>
+                    <div className="text-xs text-zinc-400 ml-1 mt-0.5">
+                      {ex.sets}组 × {ex.reps}次
+                      {ex.weight ? ` @ ${ex.weight}kg` : " 自重"}
+                    </div>
                   </div>
                 ))}
               </div>
             </div>
           )}
           {plan.advice && (
-            <div>
+            <div className="border-l-2 border-green-500 pl-3">
               <div className="text-xs text-zinc-500 mb-1">建议</div>
               <div className="text-sm text-zinc-300">{plan.advice}</div>
             </div>

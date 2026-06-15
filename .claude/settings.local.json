@@ -3,7 +3,22 @@
     "allow": [
       "WebSearch",
       "mcp__tavily__tavily_search",
-      "Bash(npx create-next-app@latest *)"
+      "Bash(npx create-next-app@latest *)",
+      "Bash(npm install *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git commit *)",
+      "Bash(powershell *)",
+      "Bash(dir D:\\\\test_projects\\\\body-watcher\\\\src\\\\lib\\\\ *)",
+      "Bash(npx next *)",
+      "Bash(npm run *)",
+      "Bash(node *)",
+      "Bash(sqlite3 *)",
+      "Bash(gh pr *)",
+      "PowerShell(gh pr *)",
+      "WebFetch(domain:skillsmp.com)",
+      "mcp__tavily__tavily_extract",
+      "mcp__codegraph__codegraph_files"
     ]
   }
 }

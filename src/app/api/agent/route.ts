@@ -1,16 +1,21 @@
-import { streamText, stepCountIs } from "ai";
-import { getModel } from "@/lib/llm";
-import { SYSTEM_PROMPT, agentTools } from "@/lib/agent";
+import { createAgentStream, createSummaryStream } from "@/lib/agent";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function POST() {
-  const model = getModel();
-  const result = streamText({
-    model,
-    system: SYSTEM_PROMPT,
-    prompt: `今天是 ${new Date().toISOString().split("T")[0]}，请根据我的数据生成下一次训练计划。`,
-    tools: agentTools,
-    stopWhen: stepCountIs(8),
+export async function POST(req: NextRequest) {
+  const mode = new URL(req.url).searchParams.get("mode");
+
+  let stream: ReadableStream<Uint8Array>;
+  try {
+    stream = mode === "summary" ? await createSummaryStream() : await createAgentStream();
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+  }
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Transfer-Encoding": "chunked",
+      "Cache-Control": "no-cache",
+    },
   });
-
-  return result.toTextStreamResponse();
 }

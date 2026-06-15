@@ -19,6 +19,7 @@ export function getDb(): Database.Database {
   _db.pragma("foreign_keys = ON");
 
   createTables(_db);
+  migrate(_db);
   return _db;
 }
 
@@ -56,6 +57,8 @@ function createTables(db: Database.Database) {
       sets INTEGER,
       reps INTEGER,
       weight REAL,
+      bodyweight INTEGER DEFAULT 0,
+      rpe INTEGER,
       FOREIGN KEY (training_log_id) REFERENCES training_log(id) ON DELETE CASCADE
     );
 
@@ -69,7 +72,39 @@ function createTables(db: Database.Database) {
       advice TEXT,
       created_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
+
+    CREATE TABLE IF NOT EXISTS training_template (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      exercises TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS exercise_library (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      muscle_group TEXT,
+      equipment TEXT,
+      category TEXT,
+      wger_id INTEGER UNIQUE,
+      image_url TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_exercise_library_name ON exercise_library(name);
   `);
+}
+
+function migrate(db: Database.Database) {
+  const cols = db.prepare("PRAGMA table_info(training_exercise)").all() as { name: string }[];
+  if (!cols.find((c) => c.name === "bodyweight")) {
+    db.exec("ALTER TABLE training_exercise ADD COLUMN bodyweight INTEGER DEFAULT 0");
+  }
+  if (!cols.find((c) => c.name === "rpe")) {
+    db.exec("ALTER TABLE training_exercise ADD COLUMN rpe INTEGER");
+  }
+  const healthCols = db.prepare("PRAGMA table_info(daily_health)").all() as { name: string }[];
+  if (!healthCols.find((c) => c.name === "rest_day")) {
+    db.exec("ALTER TABLE daily_health ADD COLUMN rest_day INTEGER DEFAULT 0");
+  }
 }
 
 // --- Health queries ---
@@ -86,11 +121,12 @@ export function upsertHealth(data: {
   body_fat?: number;
   rpe?: number;
   notes?: string;
+  rest_day?: number;
 }) {
   const db = getDb();
   return db.prepare(`
-    INSERT INTO daily_health (date, hrv, resting_hr, systolic, diastolic, sleep_hours, sleep_quality, weight, body_fat, rpe, notes)
-    VALUES (@date, @hrv, @resting_hr, @systolic, @diastolic, @sleep_hours, @sleep_quality, @weight, @body_fat, @rpe, @notes)
+    INSERT INTO daily_health (date, hrv, resting_hr, systolic, diastolic, sleep_hours, sleep_quality, weight, body_fat, rpe, notes, rest_day)
+    VALUES (@date, @hrv, @resting_hr, @systolic, @diastolic, @sleep_hours, @sleep_quality, @weight, @body_fat, @rpe, @notes, @rest_day)
     ON CONFLICT(date) DO UPDATE SET
       hrv = COALESCE(excluded.hrv, daily_health.hrv),
       resting_hr = COALESCE(excluded.resting_hr, daily_health.resting_hr),
@@ -101,7 +137,8 @@ export function upsertHealth(data: {
       weight = COALESCE(excluded.weight, daily_health.weight),
       body_fat = COALESCE(excluded.body_fat, daily_health.body_fat),
       rpe = COALESCE(excluded.rpe, daily_health.rpe),
-      notes = COALESCE(excluded.notes, daily_health.notes)
+      notes = COALESCE(excluded.notes, daily_health.notes),
+      rest_day = COALESCE(excluded.rest_day, daily_health.rest_day)
   `).run(data);
 }
 
@@ -133,6 +170,8 @@ export function insertTrainingLog(data: {
   sets?: number;
   reps?: number;
   weight?: number;
+  bodyweight?: boolean;
+  rpe?: number;
 }[]) {
   const db = getDb();
   const insertLog = db.prepare(`
@@ -140,8 +179,8 @@ export function insertTrainingLog(data: {
     VALUES (@date, @duration, @total_volume, @rpe, @notes)
   `);
   const insertExercise = db.prepare(`
-    INSERT INTO training_exercise (training_log_id, exercise_name, muscle_group, sets, reps, weight)
-    VALUES (?, @exercise_name, @muscle_group, @sets, @reps, @weight)
+    INSERT INTO training_exercise (training_log_id, exercise_name, muscle_group, sets, reps, weight, bodyweight, rpe)
+    VALUES (?, @exercise_name, @muscle_group, @sets, @reps, @weight, @bodyweight, @rpe)
   `);
 
   const transaction = db.transaction(() => {
@@ -243,6 +282,161 @@ export function getTrainingPlans(limit: number = 20) {
 
 // --- Recent training for dashboard ---
 
+// --- Exercise history ---
+
+export function queryExerciseNames() {
+  const db = getDb();
+  return db.prepare(`
+    SELECT exercise_name, muscle_group, MAX(tl.date) as last_date
+    FROM training_exercise te
+    JOIN training_log tl ON tl.id = te.training_log_id
+    GROUP BY exercise_name
+    ORDER BY last_date DESC
+  `).all();
+}
+
+export function queryLastExerciseSession(exerciseName: string) {
+  const db = getDb();
+  const logId = db.prepare(`
+    SELECT tl.id
+    FROM training_log tl
+    JOIN training_exercise te ON te.training_log_id = tl.id
+    WHERE te.exercise_name = ?
+    ORDER BY tl.date DESC
+    LIMIT 1
+  `).get(exerciseName) as { id: number } | undefined;
+
+  if (!logId) return [];
+
+  return db.prepare(`
+    SELECT reps, weight, bodyweight, rpe
+    FROM training_exercise
+    WHERE training_log_id = ? AND exercise_name = ?
+    ORDER BY id ASC
+  `).all(logId.id, exerciseName);
+}
+
+export function queryExerciseProgress(exerciseName: string, days: number = 90) {
+  const db = getDb();
+  // 只返回原始 max_weight + max_weight_reps，1RM 由前端按选定公式本地重算。
+  return db.prepare(`
+    SELECT
+      tl.date,
+      MAX(CASE WHEN te.bodyweight = 0 THEN te.weight END) as max_weight,
+      MAX(CASE WHEN te.bodyweight = 0 THEN te.reps END) as max_weight_reps
+    FROM training_exercise te
+    JOIN training_log tl ON tl.id = te.training_log_id
+    WHERE te.exercise_name = ?
+      AND tl.date >= date('now', '-' || ? || ' days')
+      AND te.reps IS NOT NULL
+    GROUP BY tl.date
+    ORDER BY tl.date ASC
+  `).all(exerciseName, days);
+}
+
+// --- Exercise library (wger cached) ---
+
+export interface ExerciseLibraryEntry {
+  id: number;
+  name: string;
+  muscle_group: string | null;
+  equipment: string | null;
+  category: string | null;
+  wger_id: number | null;
+  image_url: string | null;
+}
+
+export function searchExerciseLibrary(query: string, limit: number = 10): ExerciseLibraryEntry[] {
+  const db = getDb();
+  const term = `%${query.trim()}%`;
+  if (!query.trim()) return [];
+  return db.prepare(`
+    SELECT id, name, muscle_group, equipment, category, wger_id, image_url
+    FROM exercise_library
+    WHERE name LIKE ?
+    ORDER BY name COLLATE NOCASE ASC
+    LIMIT ?
+  `).all(term, limit) as ExerciseLibraryEntry[];
+}
+
+export function getLibraryCount(): number {
+  const db = getDb();
+  return (db.prepare("SELECT COUNT(*) as n FROM exercise_library").get() as { n: number }).n;
+}
+
+export function insertExerciseLibraryEntry(entry: {
+  name: string;
+  muscle_group?: string | null;
+  equipment?: string | null;
+  category?: string | null;
+  wger_id?: number | null;
+  image_url?: string | null;
+}) {
+  const db = getDb();
+  db.prepare(`
+    INSERT OR IGNORE INTO exercise_library (name, muscle_group, equipment, category, wger_id, image_url)
+    VALUES (@name, @muscle_group, @equipment, @category, @wger_id, @image_url)
+  `).run({
+    muscle_group: null,
+    equipment: null,
+    category: null,
+    wger_id: null,
+    image_url: null,
+    ...entry,
+  });
+}
+
+export function queryTrainingCalendar(year: number, month: number) {
+  const db = getDb();
+  const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
+  const endMonth = month === 12 ? 1 : month + 1;
+  const endYear = month === 12 ? year + 1 : year;
+  const endDate = `${endYear}-${String(endMonth).padStart(2, "0")}-01`;
+
+  return db.prepare(`
+    SELECT tl.id as log_id, tl.date, GROUP_CONCAT(DISTINCT te.muscle_group) as muscle_groups, COUNT(DISTINCT te.exercise_name) as exercise_count
+    FROM training_log tl
+    JOIN training_exercise te ON te.training_log_id = tl.id
+    WHERE tl.date >= ? AND tl.date < ?
+    GROUP BY tl.date
+    ORDER BY tl.date ASC
+  `).all(startDate, endDate);
+}
+
+export function getTrainingLog(id: number) {
+  const db = getDb();
+  const log = db.prepare("SELECT * FROM training_log WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+  if (!log) return null;
+  (log as Record<string, unknown>).exercises = db.prepare("SELECT * FROM training_exercise WHERE training_log_id = ?").all(id);
+  return log;
+}
+
+export function deleteTrainingLog(id: number) {
+  const db = getDb();
+  db.prepare("DELETE FROM training_log WHERE id = ?").run(id);
+}
+
+export function updateTrainingLog(
+  id: number,
+  data: { date: string; duration?: number; total_volume?: number; rpe?: number; notes?: string },
+  exercises: { exercise_name: string; muscle_group: string; sets?: number; reps?: number; weight?: number; bodyweight?: boolean; rpe?: number }[]
+) {
+  const db = getDb();
+  const tx = db.transaction(() => {
+    db.prepare(`
+      UPDATE training_log SET date = @date, duration = @duration, total_volume = @total_volume, rpe = @rpe, notes = @notes
+      WHERE id = ?
+    `).run(data, id);
+    db.prepare("DELETE FROM training_exercise WHERE training_log_id = ?").run(id);
+    const insert = db.prepare(`
+      INSERT INTO training_exercise (training_log_id, exercise_name, muscle_group, sets, reps, weight, bodyweight, rpe)
+      VALUES (?, @exercise_name, @muscle_group, @sets, @reps, @weight, @bodyweight, @rpe)
+    `);
+    for (const ex of exercises) insert.run(id, ex);
+  });
+  tx();
+}
+
 export function getRecentTrainings(limit: number = 5) {
   const db = getDb();
   const logs = db.prepare(`
@@ -256,4 +450,72 @@ export function getRecentTrainings(limit: number = 5) {
     (log as Record<string, unknown>).exercises = exercises;
   }
   return logs;
+}
+
+// --- Template queries ---
+
+export function getTemplates() {
+  const db = getDb();
+  return db.prepare("SELECT * FROM training_template ORDER BY created_at DESC").all();
+}
+
+export function saveTemplate(data: { name: string; exercises: string }) {
+  const db = getDb();
+  return db.prepare("INSERT INTO training_template (name, exercises) VALUES (@name, @exercises)").run(data);
+}
+
+export function deleteTemplate(id: number) {
+  const db = getDb();
+  db.prepare("DELETE FROM training_template WHERE id = ?").run(id);
+}
+
+// --- Stats ---
+
+export function queryTrainingStats() {
+  const db = getDb();
+  const total = db.prepare("SELECT COUNT(*) as count FROM training_log").get() as { count: number };
+  const thisMonth = db.prepare(`
+    SELECT COUNT(*) as count FROM training_log
+    WHERE date >= strftime('%Y-%m-01', 'now')
+  `).get() as { count: number };
+  const totalVolume = db.prepare("SELECT COALESCE(SUM(total_volume), 0) as sum FROM training_log").get() as { sum: number };
+  const monthVolume = db.prepare(`
+    SELECT COALESCE(SUM(total_volume), 0) as sum FROM training_log
+    WHERE date >= strftime('%Y-%m-01', 'now')
+  `).get() as { sum: number };
+  const topExercises = db.prepare(`
+    SELECT exercise_name, COUNT(*) as count
+    FROM training_exercise
+    GROUP BY exercise_name
+    ORDER BY count DESC
+    LIMIT 5
+  `).all();
+  return { totalSessions: total.count, monthSessions: thisMonth.count, totalVolume: totalVolume.sum, monthVolume: monthVolume.sum, topExercises };
+}
+
+// --- Rest days for calendar ---
+
+export function queryRestDays(year: number, month: number) {
+  const db = getDb();
+  const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
+  const endMonth = month === 12 ? 1 : month + 1;
+  const endYear = month === 12 ? year + 1 : year;
+  const endDate = `${endYear}-${String(endMonth).padStart(2, "0")}-01`;
+  return db.prepare(`
+    SELECT date FROM daily_health WHERE rest_day = 1 AND date >= ? AND date < ?
+  `).all(startDate, endDate);
+}
+
+// --- Export ---
+
+export function exportAllTraining() {
+  const db = getDb();
+  const logs = db.prepare("SELECT * FROM training_log ORDER BY date ASC").all() as Record<string, unknown>[];
+  const exercises = db.prepare("SELECT * FROM training_exercise ORDER BY training_log_id, id").all() as Record<string, unknown>[];
+  return { logs, exercises };
+}
+
+export function exportAllHealth() {
+  const db = getDb();
+  return db.prepare("SELECT * FROM daily_health ORDER BY date ASC").all();
 }

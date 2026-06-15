@@ -21,6 +21,7 @@ export async function POST(request: NextRequest) {
     body_fat: body_fat || null,
     rpe: rpe || null,
     notes: notes || null,
+    rest_day: body.rest_day ?? null,
   });
 
   return NextResponse.json({ ok: true });
