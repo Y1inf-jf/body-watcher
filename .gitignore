@@ -34,8 +34,10 @@ yarn-error.log*
 .env*
 !.env.example
 
-# database
+# database (SQLite main db + WAL shared-memory & write-ahead log)
 data/*.db
+data/*.db-shm
+data/*.db-wal
 
 # vercel
 .vercel

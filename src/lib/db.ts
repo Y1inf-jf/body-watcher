@@ -348,12 +348,15 @@ export interface ExerciseLibraryEntry {
 
 export function searchExerciseLibrary(query: string, limit: number = 10): ExerciseLibraryEntry[] {
   const db = getDb();
-  const term = `%${query.trim()}%`;
-  if (!query.trim()) return [];
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+  // 转义 LIKE 通配符（% _ \），用反斜杠作 ESCAPE 字符，避免用户输入的这些字符被当通配符匹配。
+  const escaped = trimmed.replace(/[%_\\]/g, (m) => `\\${m}`);
+  const term = `%${escaped}%`;
   return db.prepare(`
     SELECT id, name, muscle_group, equipment, category, wger_id, image_url
     FROM exercise_library
-    WHERE name LIKE ?
+    WHERE name LIKE ? ESCAPE '\\'
     ORDER BY name COLLATE NOCASE ASC
     LIMIT ?
   `).all(term, limit) as ExerciseLibraryEntry[];

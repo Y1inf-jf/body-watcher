@@ -65,6 +65,9 @@ interface Lookup {
   id: number;
   name: string;
 }
+interface Muscle extends Lookup {
+  name_en: string;
+}
 
 async function main() {
   console.log("→ 拉取 exercise-translation (language=2)…");
@@ -77,13 +80,16 @@ async function main() {
   const exercises = await fetchAllPages<Exercise>("exercise?language=2&status=2");
   console.log(`  ${exercises.length} 条已审核动作`);
 
-  console.log("→ 拉取 category / equipment lookup 表…");
+  console.log("→ 拉取 category / equipment / muscle lookup 表…");
   const categories = await fetchAllPages<Lookup>("exercisecategory");
   const equipments = await fetchAllPages<Lookup>("equipment");
+  const muscles = await fetchAllPages<Muscle>("muscle");
   const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
   const equipmentMap = new Map(equipments.map((e) => [e.id, e.name]));
+  // 肌群取常用英文名（name_en，如 "Chest"），拉丁名对普通用户不友好。
+  const muscleMap = new Map(muscles.map((m) => [m.id, m.name_en]));
 
-  // 关联：translation.exercise → exercise.id，拿到 category/equipment。
+  // 关联：translation.exercise → exercise.id，拿到 category/equipment/muscles。
   const exerciseMap = new Map(exercises.map((e) => [e.id, e]));
 
   console.log("→ 写入本地数据库…");
@@ -125,11 +131,15 @@ async function main() {
       .map((id) => equipmentMap.get(id))
       .filter(Boolean)
       .join(", ");
+    // muscle_group 取主肌群（muscles[0]）的常用英文名；无肌群信息时回退到分类名。
+    const primaryMuscle = ex?.muscles?.[0];
+    const muscleName = primaryMuscle ? muscleMap.get(primaryMuscle) ?? null : null;
+    const categoryName = ex ? categoryMap.get(ex.category) ?? null : null;
     rows.push({
       name,
-      muscle_group: ex ? categoryMap.get(ex.category) ?? null : null,
+      muscle_group: muscleName ?? categoryName,
       equipment: equipmentNames || null,
-      category: ex ? categoryMap.get(ex.category) ?? null : null,
+      category: categoryName,
       wger_id: t.exercise,
       image_url: null,
     });

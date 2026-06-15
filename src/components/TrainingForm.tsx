@@ -41,14 +41,23 @@ interface TemplateExercise {
 const MUSCLE_GROUPS = ["胸", "背", "股四头肌", "腘绳肌", "三头", "二头", "前束", "中束", "后束", "臀", "核心"];
 
 // wger 英文肌群/分类 → 中文，用于从动作库选中时自动映射。
+// 覆盖 wger 的 muscle name_en 与 exercisecategory name 两套取值。
 const WGER_GROUP_MAP: Record<string, string> = {
+  // 肌群 (muscle.name_en)
   Chest: "胸",
-  Back: "背",
-  Legs: "股四头肌",
-  Arms: "二头",
+  Biceps: "二头",
+  Triceps: "三头",
   Shoulders: "中束",
+  Lats: "背",
+  Glutes: "臀",
+  Hamstrings: "腘绳肌",
+  Quads: "股四头肌",
+  Calves: "核心", // 中文肌群列表无小腿，暂归核心（可按需调整）
   Abs: "核心",
-  Calves: "核心",
+  // 分类 (exercisecategory.name) —— 当动作无具体肌群时回退用
+  Back: "背",
+  Arms: "二头",
+  Legs: "股四头肌",
   Cardio: "核心",
 };
 
