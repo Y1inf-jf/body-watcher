@@ -144,10 +144,11 @@ export function upsertHealth(data: {
 
 export function queryHealthMetrics(days: number) {
   const db = getDb();
+  // 升序（旧→新），与 queryBodyComposition 一致，折线图横轴从左到右为时间正序。
   return db.prepare(`
     SELECT * FROM daily_health
     WHERE date >= date('now', '-' || ? || ' days')
-    ORDER BY date DESC
+    ORDER BY date ASC
   `).all(days);
 }
 
