@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "seed:wger": "tsx scripts/seed-wger.ts"
+    "seed:wger": "node --experimental-strip-types scripts/seed-wger.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.67",
