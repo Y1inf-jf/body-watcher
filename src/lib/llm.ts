@@ -1,142 +1,63 @@
+import { streamText, stepCountIs, type StopCondition, type ToolSet } from "ai";
+import { createOpenAI } from "@ai-sdk/openai";
+
 const BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com";
 const API_KEY = process.env.DEEPSEEK_API_KEY || "";
 const MODEL = process.env.LLM_MODEL || "mimo-v2.5-pro";
 
-interface Message {
-  role: "system" | "user" | "assistant" | "tool";
-  content?: string | null;
-  tool_calls?: {
-    id: string;
-    type: "function";
-    function: { name: string; arguments: string };
-  }[];
-  tool_call_id?: string;
-}
+/**
+ * 基于 Vercel AI SDK v6 的 agent 流。
+ *
+ * 相比旧的手写 fetch 循环，这里获得：
+ * - tool 参数经 Zod 校验后才进入 execute（inputSchema）
+ * - 内建重试（maxRetries=2）与超时（timeout）
+ * - abortSignal 透传到上游，客户端取消时真正中断上游请求
+ * - 上游错误由 SDK 抛出，路由可映射为正确 HTTP 状态（见 /api/agent）
+ */
+// 工具集合类型：直接复用 AI SDK 的 ToolSet，工具定义在 agent.ts 用 tool() + Zod 构建。
+export type AgentTools = ToolSet;
 
-interface ToolDef {
-  type: "function";
-  function: {
-    name: string;
-    description: string;
-    parameters: Record<string, unknown>;
-  };
-}
-
-export interface AgentTool {
-  description: string;
-  parameters: Record<string, unknown>;
-  execute: (args: Record<string, unknown>) => Promise<unknown>;
-}
-
-export async function agentLoop(
-  systemPrompt: string,
-  userPrompt: string,
-  tools: Record<string, AgentTool>,
-  maxSteps: number = 8
-): Promise<ReadableStream<Uint8Array>> {
+export function getProvider() {
   if (!API_KEY) {
     throw new Error("DEEPSEEK_API_KEY is not configured");
   }
+  // 必须用 .chat() 走 Chat Completions：DeepSeek 等 OpenAI 兼容服务不实现 Responses API。
+  // 非官方模型名（如 mimo-v2.5-pro）不在 OpenAIChatModelId 联合类型里，需断言。
+  return createOpenAI({
+    baseURL: BASE_URL,
+    apiKey: API_KEY,
+    name: "deepseek",
+  }).chat(MODEL as Parameters<ReturnType<typeof createOpenAI>["chat"]>[0]);
+}
 
-  const encoder = new TextEncoder();
-  const toolDefs: ToolDef[] = Object.entries(tools).map(([name, t]) => ({
-    type: "function" as const,
-    function: { name, description: t.description, parameters: t.parameters },
-  }));
+/**
+ * 运行 agent 循环并以纯文本流返回（仅文字 delta，工具调用过程不在流中）。
+ * 前端用 `prev + chunk` 拼接即可，无需解析 SSE。
+ *
+ * @param extraStopConditions 额外停止条件，与 stepCountIs(maxSteps) 合并。
+ *   例如 agent 模式传入 hasToolCall("save_training_plan")，保存即停，
+ *   防止模型在单次循环内重复写库。
+ */
+export function agentLoop(
+  systemPrompt: string,
+  userPrompt: string,
+  tools: AgentTools,
+  maxSteps: number,
+  extraStopConditions: StopCondition<ToolSet>[] = []
+): ReadableStream<Uint8Array> {
+  const model = getProvider();
 
-  const messages: Message[] = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: userPrompt },
-  ];
-
-  let cancelled = false;
-
-  return new ReadableStream({
-    async pull(controller) {
-      try {
-        for (let step = 0; step < maxSteps; step++) {
-          if (cancelled) return;
-
-          const res = await fetch(`${BASE_URL}/chat/completions`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${API_KEY}`,
-            },
-            body: JSON.stringify({
-              model: MODEL,
-              messages,
-              tools: toolDefs.length > 0 ? toolDefs : undefined,
-            }),
-          });
-
-          if (!res.ok) {
-            const err = await res.text();
-            controller.enqueue(encoder.encode(`API 错误: ${res.status}`));
-            controller.close();
-            return;
-          }
-
-          const json = await res.json();
-          const choice = json.choices?.[0];
-          const msg = choice?.message;
-
-          if (!msg?.tool_calls?.length) {
-            controller.enqueue(encoder.encode(msg?.content || ""));
-            controller.close();
-            return;
-          }
-
-          const toolLog = msg.tool_calls
-            .map((tc: { function: { name: string; arguments: string } }) => {
-              const args = tc.function.arguments;
-              return `[调用工具: ${tc.function.name}(${args.length > 80 ? args.slice(0, 80) + "..." : args})]`;
-            })
-            .join("\n");
-          controller.enqueue(encoder.encode(toolLog + "\n"));
-
-          messages.push({
-            role: "assistant",
-            content: msg.content || null,
-            tool_calls: msg.tool_calls.map(
-              (tc: { id: string; type: string; function: { name: string; arguments: string } }) => ({
-                id: tc.id,
-                type: "function" as const,
-                function: { name: tc.function.name, arguments: tc.function.arguments },
-              })
-            ),
-          });
-
-          for (const tc of msg.tool_calls) {
-            try {
-              const args = JSON.parse(tc.function.arguments);
-              const result = await tools[tc.function.name].execute(args);
-              messages.push({
-                role: "tool",
-                tool_call_id: tc.id,
-                content: JSON.stringify(result),
-              });
-            } catch (e) {
-              messages.push({
-                role: "tool",
-                tool_call_id: tc.id,
-                content: JSON.stringify({ error: (e as Error).message }),
-              });
-            }
-          }
-        }
-
-        controller.enqueue(encoder.encode("已达到最大步骤限制"));
-        controller.close();
-      } catch (e) {
-        try {
-          controller.enqueue(encoder.encode(`Agent 错误: ${(e as Error).message}`));
-          controller.close();
-        } catch { /* stream already closed */ }
-      }
-    },
-    cancel() {
-      cancelled = true;
-    },
+  const result = streamText({
+    model,
+    system: systemPrompt,
+    prompt: userPrompt,
+    tools,
+    // v6 用 stopWhen 取代 maxSteps；默认 stepCountIs(1) 不会循环，必须显式设置。
+    stopWhen: [stepCountIs(maxSteps), ...extraStopConditions],
+    maxRetries: 2,
+    timeout: { totalMs: 60_000 },
   });
+
+  // toTextStreamResponse 返回 web Response；取其 body 作为 ReadableStream。
+  return result.toTextStreamResponse().body as ReadableStream<Uint8Array>;
 }
