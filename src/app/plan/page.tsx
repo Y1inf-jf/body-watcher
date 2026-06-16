@@ -129,21 +129,36 @@ function PlanHistoryCard({ plan, defaultExpanded = false }: { plan: Plan; defaul
     exercises = JSON.parse(plan.exercises || "[]");
   } catch {}
 
+  // 执行计划：把动作 JSON 编码后跳到录入页，复用 TrainingForm 的 templateData 预填。
+  const execPlanHref = `/input?plan=${encodeURIComponent(plan.exercises || "[]")}`;
+
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
-      <div
-        className="flex items-center justify-between cursor-pointer"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <div>
-          <span className="font-medium">{plan.date}</span>
-          {plan.plan_date && (
-            <span className="text-zinc-500 text-sm ml-2">目标: {plan.plan_date}</span>
-          )}
-        </div>
-        <span className="text-zinc-500 text-xs">
-          {expanded ? "收起" : "展开"}
-        </span>
+      <div className="flex items-center justify-between gap-3">
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+          className="flex items-center gap-2 text-left flex-1 min-w-0"
+        >
+          <span className="font-medium">
+            {plan.date}
+            {plan.plan_date && (
+              <span className="text-zinc-500 text-sm ml-2">目标: {plan.plan_date}</span>
+            )}
+          </span>
+          <span className="text-zinc-500 text-xs shrink-0">
+            {expanded ? "收起" : "展开"}
+          </span>
+        </button>
+        {exercises.length > 0 && (
+          <a
+            href={execPlanHref}
+            className="shrink-0 text-xs bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-white font-medium"
+          >
+            执行
+          </a>
+        )}
       </div>
       {expanded && (
         <div className="mt-3 space-y-3">
