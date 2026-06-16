@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import { exportAllTraining, exportAllHealth } from "@/lib/db";
 
 export async function GET() {

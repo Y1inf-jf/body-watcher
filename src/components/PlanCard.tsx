@@ -46,12 +46,18 @@ function groupExercises(exercises: TrainingLog["exercises"]): ExerciseBlock[] {
 export default function PlanCard({ log, onDeleted, onEdit }: { log: TrainingLog; onDeleted?: () => void; onEdit?: (id: number) => void }) {
   const blocks = groupExercises(log.exercises);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState(false);
 
   const handleDelete = async () => {
     if (!confirmDelete) { setConfirmDelete(true); return; }
-    await fetch(`/api/training?id=${log.id}`, { method: "DELETE" });
-    onDeleted?.();
-    setConfirmDelete(false);
+    const res = await fetch(`/api/training?id=${log.id}`, { method: "DELETE" });
+    if (res.ok) {
+      onDeleted?.();
+      setConfirmDelete(false);
+    } else {
+      setConfirmDelete(false);
+      setDeleteError(true);
+    }
   };
 
   return (
@@ -76,6 +82,9 @@ export default function PlanCard({ log, onDeleted, onEdit }: { log: TrainingLog;
               {confirmDelete ? "确认?" : "删除"}
             </button>
           </div>
+          {deleteError && (
+            <span className="text-xs text-red-400">删除失败，请重试</span>
+          )}
         </div>
       </div>
       <div className="space-y-2">

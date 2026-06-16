@@ -17,6 +17,10 @@ export default function WeeklySummary() {
         method: "POST",
         signal: abortRef.current.signal,
       });
+      if (!res.ok) {
+        setText("生成失败，请检查 API Key 配置");
+        return;
+      }
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();
       if (!reader) return;

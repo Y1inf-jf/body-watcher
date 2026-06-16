@@ -19,15 +19,50 @@ interface DashboardData {
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
+  const [loadError, setLoadError] = useState(false);
 
+  // 供「重试」按钮调用：重置错误态并重新请求。
   const fetchData = useCallback(() => {
+    setLoadError(false);
     fetch("/api/dashboard")
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error("dashboard request failed");
+        return r.json();
+      })
       .then(setData)
-      .catch(() => {});
+      .catch(() => setLoadError(true));
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  // 首次加载：异步 IIFE 内联 fetch，使 setState 脱离 effect 同步路径。
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch("/api/dashboard");
+        if (!res.ok) throw new Error("dashboard request failed");
+        const json = await res.json();
+        setData(json);
+      } catch {
+        setLoadError(true);
+      }
+    })();
+  }, []);
+
+  if (loadError) {
+    return (
+      <div className="max-w-5xl space-y-4">
+        <h2 className="text-xl font-bold">训练总览</h2>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 text-center">
+          <p className="text-zinc-400 mb-3">加载数据失败</p>
+          <button
+            onClick={fetchData}
+            className="inline-block bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm font-medium"
+          >
+            重试
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!data) {
     return <div className="text-zinc-500">加载中...</div>;

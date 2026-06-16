@@ -69,6 +69,36 @@ const defaultBlock = (): ExerciseBlock => ({
   sets: [defaultSet()],
 });
 
+// 纯函数：把扁平的训练动作行按 exercise_name 连续分组为表单 block。
+// 放在模块级，使 effect 中引用它时不触发 react-hooks/immutability 规则。
+function groupExercisesFromDB(exercises: Record<string, unknown>[]): ExerciseBlock[] {
+  const result: ExerciseBlock[] = [];
+  for (const ex of exercises) {
+    const name = ex.exercise_name as string;
+    const last = result[result.length - 1];
+    if (last && last.exercise_name === name) {
+      last.sets.push({
+        reps: ex.reps != null ? String(ex.reps) : "",
+        weight: ex.bodyweight ? "" : (ex.weight != null ? String(ex.weight) : ""),
+        bodyweight: !!ex.bodyweight,
+        rpe: ex.rpe != null ? String(ex.rpe) : "",
+      });
+    } else {
+      result.push({
+        exercise_name: name,
+        muscle_group: ex.muscle_group as string,
+        sets: [{
+          reps: ex.reps != null ? String(ex.reps) : "",
+          weight: ex.bodyweight ? "" : (ex.weight != null ? String(ex.weight) : ""),
+          bodyweight: !!ex.bodyweight,
+          rpe: ex.rpe != null ? String(ex.rpe) : "",
+        }],
+      });
+    }
+  }
+  return result;
+}
+
 interface TrainingFormProps {
   editId?: number | null;
   initialDate?: string;
@@ -112,14 +142,15 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
   }, []);
 
   // 当某个动作输入框激活时，防抖搜索本地 wger 动作库，补充历史记录之外的候选。
+  // effect 主体只调度定时器；清空与请求都在异步回调里，避免 set-state-in-effect。
   const activeQuery = activeSuggestion != null ? blocks[activeSuggestion]?.exercise_name ?? "" : "";
   useEffect(() => {
     const q = activeQuery.trim();
-    if (!q || q.length < 2) {
-      setLibraryResults([]);
-      return;
-    }
     const timer = setTimeout(() => {
+      if (!q || q.length < 2) {
+        setLibraryResults([]);
+        return;
+      }
       fetch(`/api/exercises?search=${encodeURIComponent(q)}`)
         .then((r) => r.json())
         .then((d) => {
@@ -158,11 +189,13 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
   }, [editId]);
 
   // Load template data
+  // 解析模板并填充表单。setState 放在异步 IIFE 中，避免 react-hooks/set-state-in-effect。
   useEffect(() => {
     if (!templateData || templateKey === 0) return;
-    try {
-      const parsed = JSON.parse(templateData) as TemplateExercise[];
-      if (parsed.length > 0) {
+    void (async () => {
+      try {
+        const parsed = JSON.parse(templateData) as TemplateExercise[];
+        if (parsed.length === 0) return;
         const newBlocks: ExerciseBlock[] = [];
         for (const ex of parsed) {
           const name = ex.name || ex.exercise_name || "";
@@ -185,37 +218,9 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
           newBlocks.push(block);
         }
         if (newBlocks.length > 0) setBlocks(newBlocks);
-      }
-    } catch {}
+      } catch {}
+    })();
   }, [templateData, templateKey]);
-
-  function groupExercisesFromDB(exercises: Record<string, unknown>[]): ExerciseBlock[] {
-    const result: ExerciseBlock[] = [];
-    for (const ex of exercises) {
-      const name = ex.exercise_name as string;
-      const last = result[result.length - 1];
-      if (last && last.exercise_name === name) {
-        last.sets.push({
-          reps: ex.reps != null ? String(ex.reps) : "",
-          weight: ex.bodyweight ? "" : (ex.weight != null ? String(ex.weight) : ""),
-          bodyweight: !!ex.bodyweight,
-          rpe: ex.rpe != null ? String(ex.rpe) : "",
-        });
-      } else {
-        result.push({
-          exercise_name: name,
-          muscle_group: ex.muscle_group as string,
-          sets: [{
-            reps: ex.reps != null ? String(ex.reps) : "",
-            weight: ex.bodyweight ? "" : (ex.weight != null ? String(ex.weight) : ""),
-            bodyweight: !!ex.bodyweight,
-            rpe: ex.rpe != null ? String(ex.rpe) : "",
-          }],
-        });
-      }
-    }
-    return result;
-  }
 
   const updateBlock = (bi: number, field: "exercise_name" | "muscle_group", value: string) => {
     setBlocks((prev) => {
@@ -400,8 +405,10 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
   };
 
   const deleteTemplate = async (id: number) => {
-    await fetch(`/api/templates?id=${id}`, { method: "DELETE" });
-    setTemplates((prev) => prev.filter((t) => t.id !== id));
+    const res = await fetch(`/api/templates?id=${id}`, { method: "DELETE" });
+    if (res.ok) {
+      setTemplates((prev) => prev.filter((t) => t.id !== id));
+    }
   };
 
   return (

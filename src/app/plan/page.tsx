@@ -19,10 +19,6 @@ export default function PlanPage() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const abortRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    fetchPlans();
-  }, []);
-
   const fetchPlans = async () => {
     const res = await fetch("/api/plans");
     if (res.ok) {
@@ -30,6 +26,17 @@ export default function PlanPage() {
       setPlans(data.plans);
     }
   };
+
+  useEffect(() => {
+    // 首次加载：异步 IIFE 内 fetch，使 setState 脱离 effect 同步路径。
+    void (async () => {
+      const res = await fetch("/api/plans");
+      if (res.ok) {
+        const data = await res.json();
+        setPlans(data.plans);
+      }
+    })();
+  }, []);
 
   const generate = async () => {
     setGenerating(true);
@@ -41,6 +48,11 @@ export default function PlanPage() {
         method: "POST",
         signal: abortRef.current.signal,
       });
+
+      if (!response.ok) {
+        setStreamText("生成失败，请检查 API Key 配置");
+        return;
+      }
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();

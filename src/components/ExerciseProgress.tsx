@@ -49,19 +49,23 @@ export default function ExerciseProgress() {
       .catch(() => setError("加载进度数据失败"));
   }, [selected]);
 
-  const latest = progress.length > 0 ? progress[progress.length - 1] : null;
+  // 防御性排序：不依赖后端返回顺序，避免「最新点」与 x 轴语义出错
+  // （与此前 HRV/HR/睡眠趋势图 x 轴反转同类的隐患）。
+  const sortedProgress = [...progress].sort((a, b) => a.date.localeCompare(b.date));
+
+  const latest = sortedProgress.length > 0 ? sortedProgress[sortedProgress.length - 1] : null;
 
   // 1RM 由前端按当前选定的公式本地重算，切换即时生效、无需重新请求。
   const latest1RM = latest ? compute1RM(latest.max_weight, latest.max_weight_reps, formula) : null;
 
-  const chartData = progress.map((p) => ({
+  const chartData = sortedProgress.map((p) => ({
     date: p.date.slice(5),
     weight: p.max_weight,
     est_1rm: compute1RM(p.max_weight, p.max_weight_reps, formula),
   }));
 
   // 是否存在超过低准确度阈值的点，用于提示用户。
-  const hasLowAccuracyPoints = progress.some(
+  const hasLowAccuracyPoints = sortedProgress.some(
     (p) => p.max_weight_reps != null && p.max_weight_reps > LOW_ACCURACY_THRESHOLD
   );
 
