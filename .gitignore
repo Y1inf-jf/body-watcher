@@ -45,3 +45,6 @@ data/*.db-wal
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# google health spike token 缓存
+scripts/google-health-spike/.tokens.json
