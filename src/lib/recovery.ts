@@ -12,18 +12,23 @@ export interface GoogleMetricRow {
   hrv_avg_ms?: number | null;
   hrv_rmssd_deep_ms?: number | null;
   resting_hr?: number | null;
+  respiratory_rate?: number | null;
+  spo2_avg?: number | null;
   steps?: number | null;
   [key: string]: unknown;
 }
 
 export interface TrainingLogRow {
   date: string;
+  duration?: number | null;
+  rpe?: number | null;
   exercises?: {
     muscle_group?: string | null;
     sets?: number | null;
     reps?: number | null;
     weight?: number | null;
     bodyweight?: number | boolean | null;
+    rpe?: number | null;
   }[];
   [key: string]: unknown;
 }
@@ -58,6 +63,8 @@ export interface RecoveryFeatures {
   dataDays: number;
   hrv: BaselineFeature & { source: "rmssd_deep" | "avg" | null };
   restingHr: BaselineFeature & { deviationBpm: number | null };
+  respiratoryRate: BaselineFeature;
+  spo2Avg: number | null;
   sleep: SleepSummary;
   steps7dTotal: number | null;
   note: string;
@@ -69,6 +76,27 @@ export interface TrainingLoadSummary {
   muscleGroups7d: string[];
   lastSessionDate: string | null;
   daysSinceLastSession: number | null;
+}
+
+export type RecoveryZone = "red" | "yellow" | "green";
+
+export interface RecoveryScoreComponent {
+  z: number | null;
+  weight: number; // 基准权重
+  weightUsed: number | null; // 归一化后实际权重（该项缺信号时为 null）
+}
+
+export interface RecoveryScore {
+  score: number | null; // 0-100，50 = 自己的正常水平
+  zone: RecoveryZone | null;
+  compositeZ: number | null;
+  components: {
+    hrv: RecoveryScoreComponent;
+    restingHr: RecoveryScoreComponent;
+    sleep: RecoveryScoreComponent;
+  };
+  flags: string[]; // SpO2 过低 / 呼吸率异常等旗标
+  note: string | null; // 不出分时的原因
 }
 
 function mean(values: number[]): number | null {
@@ -147,6 +175,15 @@ export function computeRecoveryFeatures(rowsAsc: GoogleMetricRow[]): RecoveryFea
         : null,
   };
 
+  const rrPool = pool
+    .map((r) => (r.respiratory_rate == null ? null : Number(r.respiratory_rate)))
+    .filter((v): v is number => v !== null);
+  const respiratoryRate = computeBaseline(
+    rrPool,
+    today?.respiratory_rate != null ? Number(today.respiratory_rate) : null
+  );
+  const spo2Avg = today?.spo2_avg != null ? Number(today.spo2_avg) : null;
+
   const inBedOf = (r: GoogleMetricRow): number | null =>
     r.sleep_in_bed_minutes == null ? null : Number(r.sleep_in_bed_minutes);
   const recentInBed = rowsAsc.slice(-8, -1).map(inBedOf).filter((v): v is number => v !== null);
@@ -190,6 +227,8 @@ export function computeRecoveryFeatures(rowsAsc: GoogleMetricRow[]): RecoveryFea
     dataDays: rowsAsc.length,
     hrv,
     restingHr,
+    respiratoryRate,
+    spo2Avg,
     sleep,
     steps7dTotal: rowsAsc.length ? steps7dTotal : null,
     note,
@@ -225,5 +264,102 @@ export function summarizeTrainingLoad(logs: TrainingLogRow[]): TrainingLoadSumma
     muscleGroups7d: [...muscleGroups],
     lastSessionDate: lastDate,
     daysSinceLastSession: daysSince,
+  };
+}
+
+// ---------- 恢复分（0-100，50 = 自己的正常水平） ----------
+// 方法：HRV/静息心率对 21 天基线取 z-score，睡眠债用固定容忍度换算，
+// 加权合成后经标准正态 CDF 映射到 0-100。颜色分档对齐 Whoop：<34 红 / 34-66 黄 / >=67 绿。
+
+const SCORE_WEIGHTS = { hrv: 0.4, restingHr: 0.3, sleep: 0.3 } as const;
+const SLEEP_DEBT_UNIT_MIN = 45; // 比近 7 天均值少睡 45 分钟记 1 个 z
+const Z_CLAMP = 3; // 单项与综合都夹在 ±3，防止单日异常刷出 0% / 100%
+const FLAG_SCORE_CAP = 66; // 有异常旗标时封顶黄色档
+
+function clampZ(v: number): number {
+  return Math.max(-Z_CLAMP, Math.min(Z_CLAMP, v));
+}
+
+// Zelen & Severo 的 erf 近似（误差 < 1.5e-7），避免为此引依赖。
+export function normalCdf(z: number): number {
+  const x = z / Math.SQRT2;
+  const t = 1 / (1 + 0.3275911 * Math.abs(x));
+  const poly =
+    ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t +
+      0.254829592) *
+    t;
+  const erf = 1 - poly * Math.exp(-x * x);
+  return 0.5 * (1 + (x >= 0 ? erf : -erf));
+}
+
+export function computeRecoveryScore(f: RecoveryFeatures): RecoveryScore {
+  const flags: string[] = [];
+  if (f.spo2Avg != null && f.spo2Avg < 90) {
+    flags.push(`血氧偏低（${f.spo2Avg}%）`);
+  }
+  if (f.respiratoryRate.ready && f.respiratoryRate.zScore != null && f.respiratoryRate.zScore > 1) {
+    flags.push(`呼吸率高于基线（+${f.respiratoryRate.zScore}σ）`);
+  }
+
+  // 静息心率取负：越高恢复越差。
+  const zHrv = f.hrv.zScore;
+  const zRhr =
+    f.restingHr.ready && f.restingHr.zScore != null ? clampZ(-f.restingHr.zScore) : null;
+  const zSleep =
+    f.sleep.debtMinutes != null ? clampZ(-f.sleep.debtMinutes / SLEEP_DEBT_UNIT_MIN) : null;
+
+  const base: RecoveryScore = {
+    score: null,
+    zone: null,
+    compositeZ: null,
+    components: {
+      hrv: { z: zHrv, weight: SCORE_WEIGHTS.hrv, weightUsed: null },
+      restingHr: { z: zRhr, weight: SCORE_WEIGHTS.restingHr, weightUsed: null },
+      sleep: { z: zSleep, weight: SCORE_WEIGHTS.sleep, weightUsed: null },
+    },
+    flags,
+    note: null,
+  };
+
+  // HRV 基线是核心信号，样本不足时整体不出分，维持"基线累计中"展示。
+  if (!f.hrv.ready) {
+    return {
+      ...base,
+      note: `基线累计中（HRV ${f.hrv.baselineDays} 天样本，满 5 天出分）`,
+    };
+  }
+
+  const candidates: {
+    key: keyof RecoveryScore["components"];
+    z: number | null;
+    weight: number;
+  }[] = [
+    { key: "hrv", z: zHrv, weight: SCORE_WEIGHTS.hrv },
+    { key: "restingHr", z: zRhr, weight: SCORE_WEIGHTS.restingHr },
+    { key: "sleep", z: zSleep, weight: SCORE_WEIGHTS.sleep },
+  ];
+  const available = candidates.filter((c): c is typeof c & { z: number } => c.z !== null);
+
+  if (available.length === 0) {
+    return { ...base, note: "基线已就绪，但今晚缺少可用恢复信号（未佩戴或未同步）" };
+  }
+
+  // 今晚某项缺数据时权重归一化，由其余信号分摊。
+  const weightSum = available.reduce((acc, c) => acc + c.weight, 0);
+  const compositeZ = clampZ(
+    available.reduce((acc, c) => acc + (c.z * c.weight) / weightSum, 0)
+  );
+  for (const c of available) {
+    base.components[c.key].weightUsed = Math.round((c.weight / weightSum) * 100) / 100;
+  }
+
+  let score = Math.round(normalCdf(compositeZ) * 100);
+  if (flags.length > 0) score = Math.min(score, FLAG_SCORE_CAP);
+
+  return {
+    ...base,
+    score,
+    zone: score < 34 ? "red" : score < 67 ? "yellow" : "green",
+    compositeZ: Math.round(compositeZ * 100) / 100,
   };
 }

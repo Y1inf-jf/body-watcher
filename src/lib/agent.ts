@@ -11,10 +11,12 @@ import {
 } from "./db";
 import {
   computeRecoveryFeatures,
+  computeRecoveryScore,
   summarizeTrainingLoad,
   type GoogleMetricRow,
   type TrainingLogRow,
 } from "./recovery";
+import { computeTrainingStatus, computeSleepNeed } from "./training-status";
 
 export const SYSTEM_PROMPT = `你是一位专业的力量训练教练和运动科学顾问。
 
@@ -32,14 +34,16 @@ export const SYSTEM_PROMPT = `你是一位专业的力量训练教练和运动�
 1. **渐进超负荷**：训练量应随时间逐步增加，但不盲目加量
 2. **肌群恢复**：力量训练后肌群需要 48-72 小时恢复，间隔不足则跳过该肌群
 3. **HRV 信号**：可穿戴设备的 HRV rMSSD z-score ≤ -1，或较基线下降超过 10%，提示身体压力较大，应降低训练强度；基线未就绪时按原始值趋势判断
-4. **静息心率**：静息心率较基线升高 5bpm 以上提示恢复不足
-5. **睡眠**：在床时长不足 6 小时、睡眠负债超过 45 分钟、或深睡占比低于 15% 时，避免大重量训练
-6. **RPE**：主观疲劳感高（>7）时，选择恢复性训练或休息
-7. **数据优先级**：可穿戴设备数据（query_recovery_status）与手工录入数据并存时，以设备值为准，手工数据作补充
+4. **恢复分**：query_recovery_status 会返回综合恢复分（0-100，50=自己的正常水平）。红色（<34）当天只安排轻松恢复活动；黄色（34-66）正常训练但不冲 PR；绿色（>=67）可上强度。分数为 null 时按 HRV/静息心率/睡眠分项信号判断，并说明基线累计进度
+5. **训练状态**：query_recovery_status 返回 trainingStatus——ACWR 急慢性比（<0.8 欠训练可加量；0.8-1.3 最优区间维持；1.3-1.5 偏高不再加量；>1.5 急性峰值，只做轻松恢复）、form 体力-疲劳（>+5 新鲜可冲；-10~+5 平衡；<-10 疲劳积累应减量）、周负荷/单调性（单调性>2 说明训练内容太单一，建议变换）、睡眠需求推荐。负荷可能由估计 RPE 得出（estimatedSessions>0 时提醒用户在训记里填 RPE 更准）
+6. **静息心率**：静息心率较基线升高 5bpm 以上提示恢复不足
+7. **睡眠**：在床时长不足 6 小时、睡眠负债超过 45 分钟、或深睡占比低于 15% 时，避免大重量训练
+8. **RPE**：主观疲劳感高（>7）时，选择恢复性训练或休息
+9. **数据优先级**：可穿戴设备数据（query_recovery_status）与手工录入数据并存时，以设备值为准，手工数据作补充
 
 ## 工作流程
 
-1. 先调用 query_recovery_status，获取设备恢复信号（HRV/静息心率基线偏离、睡眠负债）与近 7 天训练负荷
+1. 先调用 query_recovery_status，获取今日恢复分（红/黄/绿）、设备恢复信号（HRV/静息心率基线偏离、睡眠负债）与近 7 天训练负荷
 2. 查询手工健康指标与各肌群恢复状态，确定哪些肌群可以训练
 3. 查询近期训练历史，了解训练模式和进步趋势
 4. 综合分析后生成训练计划，并调用 save_training_plan 保存
@@ -61,15 +65,24 @@ export const SYSTEM_PROMPT = `你是一位专业的力量训练教练和运动�
 export const agentTools: AgentTools = {
   query_recovery_status: tool({
     description:
-      "查询可穿戴设备恢复信号：HRV/静息心率相对基线的偏离（z-score）、昨晚睡眠各阶段与睡眠负债、近 7 天训练负荷汇总、近 14 天设备指标明细",
+      "查询可穿戴设备恢复信号与训练状态：今日恢复分（0-100 及红/黄/绿档位）、HRV/静息心率相对基线的偏离（z-score）、昨晚睡眠各阶段与睡眠负债与今晚睡眠需求推荐、ACWR 急慢性负荷比与训练状态分区、form 体力-疲劳、周负荷/单调性/strain、近 7 天训练负荷汇总、近 14 天设备指标明细",
     inputSchema: z.object({}),
     execute: async () => {
-      const recent = queryGoogleDailyMetricsRange(14) as GoogleMetricRow[];
+      // 30 天窗口：覆盖 21 天基线池 + 当天；明细只回传最近 14 天控制 payload。
+      const rows = queryGoogleDailyMetricsRange(30) as GoogleMetricRow[];
+      const recovery = computeRecoveryFeatures(rows);
+      // 35 天训练窗口覆盖 ACWR 的 28 天慢性池。
+      const trainingStatus = computeTrainingStatus(
+        queryTrainingHistoryDetailed(35) as TrainingLogRow[]
+      );
       return {
-        recovery: computeRecoveryFeatures(recent),
+        recovery,
+        recoveryScore: computeRecoveryScore(recovery),
+        trainingStatus,
+        sleepNeed: computeSleepNeed(recovery.sleep, trainingStatus.yesterdayLoad),
         training: summarizeTrainingLoad(queryTrainingHistoryDetailed(7) as TrainingLogRow[]),
         muscleRecovery: queryMuscleRecovery(),
-        recent,
+        recent: rows.slice(-14),
       };
     },
   }),
@@ -169,10 +182,11 @@ const RECOVERY_PROMPT = `你是一位专业的运动科学顾问。请基于用�
 
 ## 分析结构
 
-1. **昨晚睡眠**：在床时长、深睡/REM 占比、睡眠负债解读
-2. **自主神经信号**：HRV 与静息心率相对基线的偏离（基线未就绪则说明累计进度）
-3. **训练负荷状态**：近 7 天训练频次与容量、各肌群恢复情况
-4. **今日建议**：今天适合的训练强度、练什么或休息，以及 1-2 条具体注意点
+1. **今日恢复分**：给出分数与色带（红/黄/绿）及解读，说明分数主要由哪些信号驱动；基线未就绪时说明累计进度
+2. **昨晚睡眠**：在床时长、深睡/REM 占比、睡眠负债解读
+3. **自主神经信号**：HRV 与静息心率相对基线的偏离（基线未就绪则说明累计进度）
+4. **训练负荷状态**：近 7 天训练频次与容量、各肌群恢复情况
+5. **今日建议**：今天适合的训练强度、练什么或休息，以及 1-2 条具体注意点
 
 请用简洁的中文回复，用小标题分段。`;
 
