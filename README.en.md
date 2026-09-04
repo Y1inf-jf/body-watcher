@@ -2,86 +2,127 @@
 
 English | [简体中文](./README.md)
 
-> A personal strength-training tracker and analyzer — log your workouts and health metrics, and let an AI agent generate your next training plan.
+> A self-hosted Whoop — Fitbit Air band + gym-log data + local recovery algorithms + an LLM coach, quantifying your body state every day.
 
-Built with Next.js 16 (App Router) + React 19 + TypeScript + better-sqlite3, styled with Tailwind CSS, and charted with Recharts. Plan generation is powered by an LLM agent with Function Calling.
+Built with Next.js 16 (App Router) + React 19 + TypeScript + better-sqlite3, with a dark Whoop-style dashboard in Tailwind CSS + Recharts. All data flows in automatically: wearable metrics via the Google Health API, workouts mirrored from the XunJi gym-logging app. Deterministic algorithms compress them into three numbers (recovery score / training status / sleep need), and an LLM coach turns those into daily recovery analysis and training plans.
+
+## Data Flow
+
+```
+Fitbit band ──→ Google Health cloud ──→ auto sync (startup + hourly)
+XunJi app ─────→ Open API ───────────→ exercise × set × weight × RPE mirror
+                              ↓
+                        SQLite (local)
+                              ↓
+     Deterministic algorithms: recovery 0-100 · ACWR · Form · monotony · sleep need
+                              ↓
+        Dashboard (gauge rings)  +  LLM coach (recovery / plans / weekly summary)
+```
 
 ## Features
 
-### 📊 Dashboard
-- **Trend charts**: line charts for HRV, resting heart rate, sleep duration, and weight/body-fat over time
-- **Recovery panel**: days since each muscle group was last trained, plus 7-day cumulative volume — to judge recovery state
-- **Training calendar**: month view of daily workouts and the muscle groups involved
-- **Progressive overload tracker**: pick an exercise to see max-weight and estimated 1RM trends, with **switchable Epley / Brzycki / Lombardi formulas**
-- **Weekly summary**: the AI auto-summarizes the week's training, highlights, and suggestions
+### 🔄 Automatic data sync
+- **Google Health**: sleep stages, HRV (rMSSD), resting HR, respiratory rate, SpO₂, steps, weight, workout minutes; synced at startup and hourly (configurable)
+- **XunJi mirror**: date → exercise → set × reps × weight × RPE fully mirrored, muscle groups inferred from exercise-name keywords, idempotent via `external_id`, backfill supported
+- Manual entry is hidden by default (route kept for plan-execution prefill and editing)
 
-### 📝 Data Entry
-- **Daily health metrics**: HRV, resting HR, blood pressure, sleep (duration + quality), weight, body fat, RPE, notes
-- **Training log**: multi-exercise, multi-set entry supporting reps / weight / bodyweight / RPE; can be saved as a reusable template
-- **wger exercise search**: auto-suggest while typing an exercise name. History entries come first; when insufficient, results are supplemented from the built-in wger library (852 reviewed exercises)
+### 📈 Recovery & training-status algorithms
+- **Recovery score 0-100**: HRV / resting HR z-scored against a 21-day personal baseline plus sleep debt, weighted 40/30/30 and mapped through a normal CDF; <34 red (take it easy) / 34-66 yellow (train normally) / ≥67 green (push hard)
+- **Training status**: ACWR acute:chronic ratio (EWMA 7/28d), Form fitness-fatigue (CTL-ATL-TSB), Foster monotony & strain
+- **Sleep-need recommendation**: personal 7-day average + debt repayment + yesterday's load
+- Full formulas, references, and adaptation notes in **[docs/training-algorithms.md](docs/training-algorithms.md)** (Chinese)
 
-### 🤖 AI Training Plan
-- One-click generation of your next training plan — the agent queries your health metrics, muscle-group recovery, and training history automatically
-- Factors in progressive overload, muscle recovery (48–72h), and HRV/HR/sleep signals
-- Streams the analysis process live; cancellable mid-run
-- Plans are saved automatically and viewable on the "Plan" page
+### 🤖 AI coach
+- **Recovery analysis**: the LLM cites your recovery score, baseline deviations, ACWR, and muscle-group recovery to position today's training intensity
+- **Plan generation**: progressive overload + 48-72h muscle recovery + recovery signals, auto-saved
+- **Weekly summary**: highlights and adjustments
+- All streams are live and cancellable
 
-## Tech Stack
-
-| Area | Technology |
-|------|------------|
-| Framework | Next.js 16.2.7 (App Router, Turbopack) |
-| Frontend | React 19, TypeScript 5, Tailwind CSS 4 |
-| Charts | Recharts 3 |
-| Database | better-sqlite3 (local SQLite, WAL mode) |
-| AI | Any OpenAI-compatible API (default: DeepSeek), streamed via SSE |
-| Exercise data | [wger](https://wger.de) open exercise database |
+### 📊 Dashboard (Whoop-style dark UI)
+- Glowing **gauge rings** for recovery score and ACWR, 28-day load bars
+- Gradient area charts for HRV / resting HR / sleep / weight & body fat
+- Muscle-group recovery, training calendar, progressive-overload tracker (Epley / Brzycki / Lombardi 1RM)
 
 ## Getting Started
 
 ### Requirements
-- Node.js ≥ 20 (22+ recommended; scripts need native TypeScript support)
-- npm
+- Node.js ≥ 20 (22+ recommended)
+- An OpenAI-compatible LLM API key (Bailian by default)
+- A Fitbit band + Google account, and the XunJi app for workout data (either source works alone)
 
-### 1. Install dependencies
+### 1. Install
 
 ```bash
 npm install
 ```
 
-### 2. Configure environment variables
+### 2. Configure environment
 
-Copy `.env.example` to `.env` and fill in your API key:
+Copy `.env.example` to `.env`:
 
-```bash
-cp .env.example .env
-```
+| Variable | Description |
+|----------|-------------|
+| `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | Any OpenAI-compatible endpoint; defaults to Bailian `qwen3.8-flash` |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | GCP OAuth client credentials (see below) |
+| `GOOGLE_PROXY` | Proxy for reaching Google, e.g. `http://127.0.0.1:7897` |
+| `GOOGLE_REDIRECT_URI` | Optional, defaults to `http://localhost:3000/api/google/callback` |
+| `XUNJI_API_KEY` | XunJi app Open API key |
+| `GOOGLE_SYNC_INTERVAL_MINUTES` | Sync interval, default 60, 0 disables |
 
-```env
-DEEPSEEK_API_KEY=your_api_key
-DEEPSEEK_BASE_URL=https://api.deepseek.com   # optional, can point to any OpenAI-compatible service
-# LLM_MODEL=mimo-v2.5-pro                    # optional, custom model name
-```
+### 3. Connect Google Health
 
-> 💡 An API key is only required for the "Generate Training Plan" feature. Data entry and the dashboard work without one.
+1. Create an OAuth client at [console.cloud.google.com](https://console.cloud.google.com) and fill in the credentials
+2. Register the redirect URI `http://localhost:3000/api/google/callback`
+3. Add your Google account as a Test user on the OAuth consent screen
+4. Open `/google` and click "Connect Google Health"
+5. Full walkthrough and pitfalls: [docs/google-health-spike.md](docs/google-health-spike.md) (Chinese)
 
-### 3. (Optional) Seed the exercise library
+> ⚠️ In testing mode the refresh token expires every 7 days — re-authorize on `/google` when that happens.
 
-On first use, it's recommended to fetch exercise data from wger into local storage (one-time, ~1 minute):
+### 4. (Optional) Seed the exercise library
 
 ```bash
 npm run seed:wger
 ```
 
-This fetches 852 reviewed exercises into the local SQLite database. Without it, the exercise auto-suggest in the entry form still works (based on your history only); after seeding, you get full library-backed suggestions.
-
-### 4. Start the dev server
+### 5. Run
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) to use the app.
+Open [http://localhost:3000](http://localhost:3000). Trigger a XunJi backfill on `/google` on first run; recovery baselines need ~5-7 days of nightly wear before every algorithm activates.
+
+## Tech Stack
+
+| Area | Tech |
+|------|------|
+| Framework | Next.js 16.2.7 (App Router, Turbopack) |
+| Frontend | React 19, TypeScript 5, Tailwind CSS 4, Geist fonts, lucide-react |
+| Charts | Recharts 3 (gradient area charts) |
+| Database | better-sqlite3 (local SQLite, WAL mode) |
+| AI | Any OpenAI-compatible API (AI SDK v6 function calling + SSE streaming), Bailian `qwen3.8-flash` by default |
+| Google sync | Google Health API v4 + OAuth2, per-request undici ProxyAgent |
+| Exercise data | [wger](https://wger.de) open exercise database |
+
+## ⚠️ Deployment Constraints (Important)
+
+This project is designed as a **single-user local tool with no authentication**:
+
+- All API routes and the database have **no user isolation or identity checks**
+- Secrets live only in the local `.env` (gitignored)
+- **Do not expose it to the public internet or a LAN**. Put a reverse proxy with an auth layer in front if you need remote access
+
+## Data Storage
+
+All data lives in `data/body-watcher.db` (SQLite, gitignored). Main tables:
+
+- `google_daily_metrics` / `google_raw_data` / `google_oauth_tokens` / `google_sync_log` — device metrics, raw datapoints, OAuth credentials, sync log
+- `training_log` / `training_exercise` — workouts and exercise details (`source` distinguishes xunji mirror vs manual)
+- `xunji_fetch_log` — per-date fetch log for polite rate limiting
+- `daily_health` / `training_plan` / `training_template` / `exercise_library` — manual metrics, AI plans, templates, wger library
+
+Export everything via `/api/export`.
 
 ## Project Structure
 
@@ -89,57 +130,49 @@ Open [http://localhost:3000](http://localhost:3000) to use the app.
 body-watcher/
 ├── src/
 │   ├── app/
-│   │   ├── api/                  # API routes
+│   │   ├── api/
+│   │   │   ├── google/           # OAuth auth/callback/sync/status/disconnect
+│   │   │   ├── xunji/            # XunJi sync trigger & status
 │   │   │   ├── agent/            # AI agent streaming endpoint (SSE)
-│   │   │   ├── dashboard/        # aggregated dashboard data
-│   │   │   ├── exercises/        # names / history sets / progress / wger search
-│   │   │   ├── export/           # data export
-│   │   │   ├── health/           # daily health metrics
-│   │   │   ├── plans/            # training plans
-│   │   │   ├── stats/            # statistics
-│   │   │   ├── templates/        # training templates
-│   │   │   └── training/         # training logs (CRUD)
-│   │   ├── input/page.tsx        # data entry page
-│   │   ├── plan/page.tsx         # training plan page
-│   │   ├── layout.tsx            # root layout (sidebar + dark theme)
-│   │   └── page.tsx              # dashboard home
-│   ├── components/               # UI components
-│   └── lib/
-│       ├── agent.ts              # agent tool definitions & system prompt
-│       ├── db.ts                 # SQLite data-access layer
-│       ├── formulas.ts           # 1RM estimation formulas (pure functions)
-│       └── llm.ts                # LLM agent loop (function calling + streaming)
-├── scripts/
-│   └── seed-wger.ts              # wger library seed script (idempotent, re-runnable)
-├── data/                         # SQLite DB (.gitignored, not committed)
+│   │   │   └── ...               # dashboard / training / plans / stats / export
+│   │   ├── google/page.tsx       # Sync page (connect / status / 7-day metrics)
+│   │   ├── plan/page.tsx         # Plan page (recovery analysis / generation / history)
+│   │   └── page.tsx              # Dashboard (recovery + training-status gauge rings)
+│   ├── components/
+│   │   ├── ui/                   # Card / GaugeRing primitives
+│   │   └── ...                   # dashboard cards & forms
+│   ├── lib/
+│   │   ├── google/               # Google Health client / OAuth / sync parsing
+│   │   ├── recovery.ts           # recovery features + score (pure functions)
+│   │   ├── training-status.ts    # load / ACWR / Form / monotony (pure functions)
+│   │   ├── xunji.ts              # XunJi API client & mirror
+│   │   ├── agent.ts              # agent tools & system prompts
+│   │   ├── db.ts                 # SQLite data layer
+│   │   └── llm.ts                # LLM agent loop (function calling + streaming)
+│   └── instrumentation.ts        # startup + hourly auto sync
+├── docs/
+│   ├── training-algorithms.md    # algorithm study notes (Chinese)
+│   └── google-health-spike.md    # Google Health API integration log (Chinese)
+├── scripts/                      # seed-wger and friends
+├── data/                         # SQLite database (gitignored)
 └── .env.example
 ```
-
-## Data Storage
-
-All data is stored in `data/body-watcher.db` (SQLite) at the project root. **This directory is excluded by `.gitignore`** and is never committed. Main tables:
-
-- `daily_health` — daily health metrics
-- `training_log` / `training_exercise` — training sessions and exercise details
-- `training_plan` — AI-generated training plans
-- `training_template` — user-saved training templates
-- `exercise_library` — cached wger exercise library (populated by `seed:wger`)
-
-All data can be exported via `/api/export`.
 
 ## NPM Scripts
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Start the dev server |
-| `npm run build` | Production build (includes TypeScript type-check) |
-| `npm start` | Start the production server |
+| `npm run dev` | Start dev server |
+| `npm run build` | Production build
+ (includes type check) |
+| `npm start` | Start production server |
 | `npm run lint` | Run ESLint |
-| `npm run seed:wger` | Fetch the wger exercise library into local DB (one-time, re-runnable) |
+| `npm run seed:wger` | Pull wger exercise library (idempotent) |
 
 ## Acknowledgements
 
-- [wger](https://wger.de) — open-source fitness exercise database (data under its respective licenses)
+- [wger](https://wger.de) — open exercise database
+- Whoop's public methodology and [OpenStrap/analytics](https://github.com/OpenStrap/analytics) — recovery/load algorithm references
 - [Next.js](https://nextjs.org), [Recharts](https://recharts.org), [better-sqlite3](https://github.com/WiseLibs/better-sqlite3)
 
 ## License
