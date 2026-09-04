@@ -6,8 +6,15 @@ import {
   queryTrainingHistoryDetailed,
   queryMuscleRecovery,
   queryBodyComposition,
+  queryGoogleDailyMetricsRange,
   saveTrainingPlan,
 } from "./db";
+import {
+  computeRecoveryFeatures,
+  summarizeTrainingLoad,
+  type GoogleMetricRow,
+  type TrainingLogRow,
+} from "./recovery";
 
 export const SYSTEM_PROMPT = `你是一位专业的力量训练教练和运动科学顾问。
 
@@ -24,15 +31,16 @@ export const SYSTEM_PROMPT = `你是一位专业的力量训练教练和运动�
 
 1. **渐进超负荷**：训练量应随时间逐步增加，但不盲目加量
 2. **肌群恢复**：力量训练后肌群需要 48-72 小时恢复，间隔不足则跳过该肌群
-3. **HRV 信号**：HRV 较 baseline 显著下降（>10%）提示身体压力较大，应降低训练强度
-4. **静息心率**：静息心率较 baseline 升高 5bpm 以上提示恢复不足
-5. **睡眠**：睡眠不足（<6h）或质量差时避免大重量训练
+3. **HRV 信号**：可穿戴设备的 HRV rMSSD z-score ≤ -1，或较基线下降超过 10%，提示身体压力较大，应降低训练强度；基线未就绪时按原始值趋势判断
+4. **静息心率**：静息心率较基线升高 5bpm 以上提示恢复不足
+5. **睡眠**：在床时长不足 6 小时、睡眠负债超过 45 分钟、或深睡占比低于 15% 时，避免大重量训练
 6. **RPE**：主观疲劳感高（>7）时，选择恢复性训练或休息
+7. **数据优先级**：可穿戴设备数据（query_recovery_status）与手工录入数据并存时，以设备值为准，手工数据作补充
 
 ## 工作流程
 
-1. 先查询用户的健康指标，评估身体状态
-2. 查询各肌群恢复状态，确定哪些肌群可以训练
+1. 先调用 query_recovery_status，获取设备恢复信号（HRV/静息心率基线偏离、睡眠负债）与近 7 天训练负荷
+2. 查询手工健康指标与各肌群恢复状态，确定哪些肌群可以训练
 3. 查询近期训练历史，了解训练模式和进步趋势
 4. 综合分析后生成训练计划，并调用 save_training_plan 保存
 
@@ -49,6 +57,20 @@ export const SYSTEM_PROMPT = `你是一位专业的力量训练教练和运动�
 // 工具集：每个工具的入参经 Zod 校验后才进入 execute，
 // 杜绝旧实现里 JSON.parse 后直接喂给 DB 写入的校验缺失问题。
 export const agentTools: AgentTools = {
+  query_recovery_status: tool({
+    description:
+      "查询可穿戴设备恢复信号：HRV/静息心率相对基线的偏离（z-score）、昨晚睡眠各阶段与睡眠负债、近 7 天训练负荷汇总、近 14 天设备指标明细",
+    inputSchema: z.object({}),
+    execute: async () => {
+      const recent = queryGoogleDailyMetricsRange(14) as GoogleMetricRow[];
+      return {
+        recovery: computeRecoveryFeatures(recent),
+        training: summarizeTrainingLoad(queryTrainingHistoryDetailed(7) as TrainingLogRow[]),
+        muscleRecovery: queryMuscleRecovery(),
+        recent,
+      };
+    },
+  }),
   query_health_metrics: tool({
     description: "查询最近 N 天的健康指标数据（HRV、静息心率、血压、睡眠等）",
     inputSchema: z.object({
@@ -110,6 +132,7 @@ const SUMMARY_PROMPT = `你是一位专业的力量训练教练。请根据用�
 
 - 工具返回的数据就是用户的实际数据，直接使用即可，不要说"数据不可用"
 - 如果某个工具返回空数组，说明该周没有该类型的数据
+- 恢复趋势优先使用可穿戴设备数据（query_recovery_status 里的 HRV 基线偏离与睡眠负债）
 
 ## 总结内容
 
@@ -130,6 +153,37 @@ export function createSummaryStream() {
     SUMMARY_PROMPT,
     `今天是 ${today}，请总结我最近 7 天的训练情况。`,
     summaryTools,
+    4
+  );
+}
+
+const RECOVERY_PROMPT = `你是一位专业的运动科学顾问。请基于用户可穿戴设备的恢复信号和近期训练负荷，生成今日恢复分析。
+
+## 重要规则
+
+- 工具返回的数据就是用户的实际数据，直接使用即可，不要说"数据不可用"
+- 基线数据不足时（返回里明确标注"基线累计中"），如实说明累计进度，不要编造基线对比
+- 这是恢复分析，不是排课：不要生成训练计划明细，不要调用任何保存工具
+
+## 分析结构
+
+1. **昨晚睡眠**：在床时长、深睡/REM 占比、睡眠负债解读
+2. **自主神经信号**：HRV 与静息心率相对基线的偏离（基线未就绪则说明累计进度）
+3. **训练负荷状态**：近 7 天训练频次与容量、各肌群恢复情况
+4. **今日建议**：今天适合的训练强度、练什么或休息，以及 1-2 条具体注意点
+
+请用简洁的中文回复，用小标题分段。`;
+
+export function createRecoveryStream() {
+  const today = new Date().toISOString().split("T")[0];
+  // 恢复分析不写库：从工具集剔除 save_training_plan。
+  const recoveryTools = Object.fromEntries(
+    Object.entries(agentTools).filter(([name]) => name !== "save_training_plan")
+  );
+  return agentLoop(
+    RECOVERY_PROMPT,
+    `今天是 ${today}，请分析我今天的恢复情况。`,
+    recoveryTools,
     4
   );
 }

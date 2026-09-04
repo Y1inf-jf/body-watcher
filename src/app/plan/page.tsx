@@ -15,6 +15,7 @@ interface Plan {
 
 export default function PlanPage() {
   const [generating, setGenerating] = useState(false);
+  const [activeMode, setActiveMode] = useState<"plan" | "recovery" | null>(null);
   const [streamText, setStreamText] = useState("");
   const [plans, setPlans] = useState<Plan[]>([]);
   const abortRef = useRef<AbortController | null>(null);
@@ -38,13 +39,14 @@ export default function PlanPage() {
     })();
   }, []);
 
-  const generate = async () => {
+  const generate = async (mode: "plan" | "recovery") => {
     setGenerating(true);
+    setActiveMode(mode);
     setStreamText("");
     abortRef.current = new AbortController();
 
     try {
-      const response = await fetch("/api/agent", {
+      const response = await fetch(`/api/agent${mode === "recovery" ? "?mode=recovery" : ""}`, {
         method: "POST",
         signal: abortRef.current.signal,
       });
@@ -71,7 +73,7 @@ export default function PlanPage() {
       }
     } finally {
       setGenerating(false);
-      fetchPlans();
+      if (mode === "plan") fetchPlans();
     }
   };
 
@@ -80,11 +82,18 @@ export default function PlanPage() {
       <div className="flex items-center gap-4">
         <h2 className="text-xl font-bold">训练计划</h2>
         <button
-          onClick={generate}
+          onClick={() => generate("recovery")}
+          disabled={generating}
+          className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 disabled:opacity-50 px-4 py-2 rounded text-sm text-zinc-200"
+        >
+          {generating && activeMode === "recovery" ? "分析中..." : "恢复分析"}
+        </button>
+        <button
+          onClick={() => generate("plan")}
           disabled={generating}
           className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded text-sm font-medium"
         >
-          {generating ? "分析中..." : "生成训练计划"}
+          {generating && activeMode === "plan" ? "分析中..." : "生成训练计划"}
         </button>
         {generating && (
           <button
@@ -98,7 +107,9 @@ export default function PlanPage() {
 
       {streamText && (
         <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
-          <h3 className="text-sm font-medium text-zinc-400 mb-2">Agent 分析过程</h3>
+          <h3 className="text-sm font-medium text-zinc-400 mb-2">
+            {activeMode === "recovery" ? "今日恢复分析" : "Agent 分析过程"}
+          </h3>
           <pre className="text-sm text-zinc-300 whitespace-pre-wrap font-mono">
             {streamText}
           </pre>

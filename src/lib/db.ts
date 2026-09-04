@@ -697,6 +697,16 @@ export function queryGoogleDailyMetrics(days: number = 7) {
   `).all(days);
 }
 
+// 升序（旧→新）版本：供基线/趋势计算与 LLM 查看走势。
+export function queryGoogleDailyMetricsRange(days: number) {
+  const db = getDb();
+  return db.prepare(`
+    SELECT * FROM google_daily_metrics
+    WHERE date >= date('now', '-' || ? || ' days')
+    ORDER BY date ASC
+  `).all(days);
+}
+
 export function saveGoogleRawData(dataType: string, dataDate: string, points: unknown[]) {
   const db = getDb();
   db.prepare(`
