@@ -84,21 +84,21 @@ export default function PlanPage() {
         <button
           onClick={() => generate("recovery")}
           disabled={generating}
-          className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 disabled:opacity-50 px-4 py-2 rounded text-sm text-zinc-200"
+          className="rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-50 px-4 py-2 text-sm text-zinc-200 transition-colors"
         >
           {generating && activeMode === "recovery" ? "分析中..." : "恢复分析"}
         </button>
         <button
           onClick={() => generate("plan")}
           disabled={generating}
-          className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded text-sm font-medium"
+          className="rounded-lg bg-accent/90 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-50"
         >
           {generating && activeMode === "plan" ? "分析中..." : "生成训练计划"}
         </button>
         {generating && (
           <button
             onClick={() => abortRef.current?.abort()}
-            className="text-red-400 hover:text-red-300 text-sm"
+            className="text-sm text-zinc-500 transition-colors hover:text-zone-red"
           >
             取消
           </button>
@@ -106,8 +106,8 @@ export default function PlanPage() {
       </div>
 
       {streamText && (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
-          <h3 className="text-sm font-medium text-zinc-400 mb-2">
+        <div className="panel animate-fade-up p-4">
+          <h3 className="mb-2 text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">
             {activeMode === "recovery" ? "今日恢复分析" : "Agent 分析过程"}
           </h3>
           <pre className="text-sm text-zinc-300 whitespace-pre-wrap font-mono">
@@ -144,7 +144,7 @@ function PlanHistoryCard({ plan, defaultExpanded = false }: { plan: Plan; defaul
   const execPlanHref = `/input?plan=${encodeURIComponent(plan.exercises || "[]")}`;
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+    <div className="panel animate-fade-up p-4">
       <div className="flex items-center justify-between gap-3">
         <button
           type="button"
@@ -165,7 +165,7 @@ function PlanHistoryCard({ plan, defaultExpanded = false }: { plan: Plan; defaul
         {exercises.length > 0 && (
           <a
             href={execPlanHref}
-            className="shrink-0 text-xs bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-white font-medium"
+            className="shrink-0 rounded border border-accent/30 bg-accent/10 px-3 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/20"
           >
             执行
           </a>
@@ -173,11 +173,11 @@ function PlanHistoryCard({ plan, defaultExpanded = false }: { plan: Plan; defaul
       </div>
       {expanded && (
         <div className="mt-3 space-y-3">
-          <div className="border-l-2 border-blue-500 pl-3">
+          <div className="border-l-2 border-accent/70 pl-3">
             <div className="text-xs text-zinc-500 mb-1">分析摘要</div>
             <div className="text-sm text-zinc-300">{plan.analysis_summary}</div>
           </div>
-          <div className="border-l-2 border-amber-500 pl-3">
+          <div className="border-l-2 border-zone-amber/70 pl-3">
             <div className="text-xs text-zinc-500 mb-1">恢复评估</div>
             <div className="text-sm text-zinc-300">{plan.recovery_assessment}</div>
           </div>
@@ -186,7 +186,7 @@ function PlanHistoryCard({ plan, defaultExpanded = false }: { plan: Plan; defaul
               <div className="text-xs text-zinc-500 mb-2">训练动作</div>
               <div className="space-y-2">
                 {exercises.map((ex, i) => (
-                  <div key={i} className="bg-zinc-800/50 border border-zinc-700/50 rounded p-2">
+                  <div key={i} className="rounded-lg border border-white/5 bg-white/[0.02] p-2">
                     <div className="text-sm text-zinc-200">
                       <span className="text-zinc-500 text-xs mr-2">[{ex.muscle_group}]</span>
                       <span className="font-medium">{ex.name}</span>
@@ -202,7 +202,7 @@ function PlanHistoryCard({ plan, defaultExpanded = false }: { plan: Plan; defaul
             </div>
           )}
           {plan.advice && (
-            <div className="border-l-2 border-green-500 pl-3">
+            <div className="border-l-2 border-zone-green/70 pl-3">
               <div className="text-xs text-zinc-500 mb-1">建议</div>
               <div className="text-sm text-zinc-300">{plan.advice}</div>
             </div>

@@ -4,17 +4,24 @@ import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import TrendChart from "@/components/TrendChart";
 import RecoveryPanel from "@/components/RecoveryPanel";
+import RecoveryScoreCard from "@/components/RecoveryScoreCard";
+import TrainingStatusCard from "@/components/TrainingStatusCard";
 import PlanCard from "@/components/PlanCard";
 import ExerciseProgress from "@/components/ExerciseProgress";
 import TrainingCalendar from "@/components/TrainingCalendar";
 import StatsPanel from "@/components/StatsPanel";
 import WeeklySummary from "@/components/WeeklySummary";
+import type { RecoveryFeatures, RecoveryScore } from "@/lib/recovery";
+import type { SleepNeedResult, TrainingStatus } from "@/lib/training-status";
 
 interface DashboardData {
   healthMetrics: Record<string, unknown>[];
   muscleRecovery: { muscle_group: string; last_trained: string; days_since: number; total_volume_7d: number | null }[];
   recentTrainings: Record<string, unknown>[];
   bodyComposition: Record<string, unknown>[];
+  recovery?: { features: RecoveryFeatures; score: RecoveryScore };
+  trainingStatus?: TrainingStatus;
+  sleepNeed?: SleepNeedResult | null;
 }
 
 export default function DashboardPage() {
@@ -51,11 +58,11 @@ export default function DashboardPage() {
     return (
       <div className="max-w-5xl space-y-4">
         <h2 className="text-xl font-bold">训练总览</h2>
-        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 text-center">
+        <div className="panel p-6 text-center">
           <p className="text-zinc-400 mb-3">加载数据失败</p>
           <button
             onClick={fetchData}
-            className="inline-block bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm font-medium"
+            className="inline-block rounded-lg bg-accent/90 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent"
           >
             重试
           </button>
@@ -89,17 +96,24 @@ export default function DashboardPage() {
         </a>
       </div>
 
+      {data.recovery && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <RecoveryScoreCard features={data.recovery.features} score={data.recovery.score} sleepNeed={data.sleepNeed ?? null} />
+          {data.trainingStatus && <TrainingStatusCard status={data.trainingStatus} />}
+        </div>
+      )}
+
       {!isEmpty && <StatsPanel />}
 
       {isEmpty && (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 text-center">
+        <div className="panel p-6 text-center">
           <p className="text-zinc-400 mb-2">欢迎使用 Body Watcher</p>
           <p className="text-zinc-600 text-sm mb-4">
             开始记录你的健康数据和训练日志，系统会自动分析并生成训练计划。
           </p>
           <Link
             href="/input"
-            className="inline-block bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm font-medium"
+            className="inline-block rounded-lg bg-accent/90 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent"
           >
             开始录入数据
           </Link>
@@ -111,17 +125,17 @@ export default function DashboardPage() {
         <TrendChart
           title="HRV 趋势"
           data={healthData}
-          series={[{ dataKey: "hrv", color: "#22c55e", name: "HRV (ms)" }]}
+          series={[{ dataKey: "hrv", color: "#00e08c", name: "HRV (ms)" }]}
         />
         <TrendChart
           title="静息心率"
           data={healthData}
-          series={[{ dataKey: "resting_hr", color: "#ef4444", name: "心率 (bpm)" }]}
+          series={[{ dataKey: "resting_hr", color: "#ff5c5c", name: "心率 (bpm)" }]}
         />
         <TrendChart
           title="睡眠时长"
           data={healthData}
-          series={[{ dataKey: "sleep_hours", color: "#8b5cf6", name: "时长 (h)" }]}
+          series={[{ dataKey: "sleep_hours", color: "#22d3ee", name: "时长 (h)" }]}
         />
         <TrendChart
           title="体重 / 体脂"
@@ -131,8 +145,8 @@ export default function DashboardPage() {
             body_fat: m.body_fat as number | null,
           }))}
           series={[
-            { dataKey: "weight", color: "#f59e0b", name: "体重 (kg)" },
-            { dataKey: "body_fat", color: "#06b6d4", name: "体脂 (%)" },
+            { dataKey: "weight", color: "#ffb224", name: "体重 (kg)" },
+            { dataKey: "body_fat", color: "#a78bfa", name: "体脂 (%)" },
           ]}
         />
       </div>
@@ -152,10 +166,10 @@ export default function DashboardPage() {
       <div>
         <h3 className="text-sm font-medium text-zinc-400 mb-3">近期训练</h3>
         {data.recentTrainings.length === 0 ? (
-          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 text-center">
+          <div className="panel p-4 text-center">
             <p className="text-zinc-600 text-sm">
               还没有训练记录，
-              <Link href="/input" className="text-blue-400 hover:text-blue-300">去录入</Link>
+              <Link href="/input" className="text-accent hover:text-accent/80">去录入</Link>
             </p>
           </div>
         ) : (

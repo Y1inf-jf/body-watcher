@@ -71,10 +71,10 @@ export default function TrainingCalendar() {
   }).length;
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+    <div className="panel animate-fade-up p-4">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-medium text-zinc-400">训练日历</h3>
-        {error && <span className="text-xs text-red-400">{error}</span>}
+        <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">Training Calendar · 训练日历</h3>
+        {error && <span className="text-xs text-zone-red">{error}</span>}
         <div className="flex items-center gap-2">
           <button onClick={prevMonth} className="text-zinc-500 hover:text-zinc-300 text-sm px-1">&lt;</button>
           <span className="text-sm text-zinc-300 w-24 text-center">{year}年{month}月</span>
@@ -104,43 +104,43 @@ export default function TrainingCalendar() {
               href={cell ? `/input?edit=${cell.log_id}` : `/input?date=${dateStr}`}
               className={`text-center py-1 rounded text-xs min-h-[3rem] flex flex-col items-center justify-start pt-1 cursor-pointer hover:brightness-125 transition ${
                 cell
-                  ? "bg-green-900/40 border border-green-800/50"
+                  ? "bg-zone-green/15 border border-zone-green/30"
                   : isRest
-                  ? "bg-blue-900/30 border border-blue-800/40"
+                  ? "bg-accent/10 border border-accent/25"
                   : isCurrentDay
-                  ? "border border-zinc-600"
+                  ? "border border-white/25"
                   : ""
               }`}
             >
               <span className={
-                cell ? "text-green-300 font-medium"
-                  : isRest ? "text-blue-300 font-medium"
+                cell ? "text-zone-green font-medium"
+                  : isRest ? "text-accent font-medium"
                   : isCurrentDay ? "text-zinc-300"
                   : "text-zinc-600"
               }>
                 {dayNum}
               </span>
               {cell && (
-                <span className="text-[10px] text-green-500 mt-0.5 leading-tight">
+                <span className="text-[10px] text-zone-green/70 mt-0.5 leading-tight">
                   {cell.muscle_groups.split(",").slice(0, 2).join(",")}
                 </span>
               )}
               {isRest && !cell && (
-                <span className="text-[10px] text-blue-500 mt-0.5">休息</span>
+                <span className="text-[10px] text-accent/80 mt-0.5">休息</span>
               )}
             </Link>
           );
         })}
       </div>
 
-      <div className="flex items-center gap-2 mt-3 pt-2 border-t border-zinc-800">
+      <div className="flex items-center gap-2 mt-3 pt-2 border-t border-white/5">
         <input
           type="date"
           value={restDate}
           onChange={(e) => setRestDate(e.target.value)}
-          className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs"
+          className="rounded border border-white/10 bg-white/[0.04] px-2 py-1 text-xs text-zinc-200 [color-scheme:dark]"
         />
-        <button onClick={markRestDay} className="text-xs bg-blue-900/50 text-blue-300 hover:bg-blue-900 px-2 py-1 rounded">
+        <button onClick={markRestDay} className="text-xs rounded border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 px-2 py-1 transition-colors">
           标记休息日
         </button>
       </div>

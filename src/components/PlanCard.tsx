@@ -61,7 +61,7 @@ export default function PlanCard({ log, onDeleted, onEdit }: { log: TrainingLog;
   };
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 group">
+    <div className="panel animate-fade-up p-4 group">
       <div className="flex items-center justify-between mb-3">
         <span className="font-medium">{log.date}</span>
         <div className="flex gap-3 items-center">
@@ -70,26 +70,26 @@ export default function PlanCard({ log, onDeleted, onEdit }: { log: TrainingLog;
           {log.duration ? <span className="text-xs text-zinc-400">{log.duration} min</span> : null}
           <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
             {onEdit && (
-              <button onClick={() => onEdit(log.id)} className="text-xs text-zinc-500 hover:text-blue-400 px-1">
+              <button onClick={() => onEdit(log.id)} className="text-xs text-zinc-500 hover:text-accent px-1">
                 编辑
               </button>
             )}
             <button
               onClick={handleDelete}
               onBlur={() => setConfirmDelete(false)}
-              className={`text-xs px-1 ${confirmDelete ? "text-red-400" : "text-zinc-500 hover:text-red-400"}`}
+              className={`text-xs px-1 ${confirmDelete ? "text-zone-red" : "text-zinc-500 hover:text-zone-red"}`}
             >
               {confirmDelete ? "确认?" : "删除"}
             </button>
           </div>
           {deleteError && (
-            <span className="text-xs text-red-400">删除失败，请重试</span>
+            <span className="text-xs text-zone-red">删除失败，请重试</span>
           )}
         </div>
       </div>
       <div className="space-y-2">
         {blocks.map((block, i) => (
-          <div key={i} className="bg-zinc-800/50 border border-zinc-700/50 rounded p-2">
+          <div key={i} className="rounded-lg border border-white/5 bg-white/[0.02] p-2">
             <div className="text-sm text-zinc-200 mb-1">
               <span className="text-zinc-500 text-xs mr-2">[{block.muscle_group}]</span>
               {block.name}

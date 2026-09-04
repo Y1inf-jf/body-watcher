@@ -174,25 +174,25 @@ export default function GoogleSyncPage() {
       </p>
 
       {banner && (
-        <div className={`rounded-lg border px-4 py-3 text-sm ${banner.kind === "ok" ? "border-green-800 bg-green-950/50 text-green-300" : "border-red-800 bg-red-950/50 text-red-300"}`}>
+        <div className={`rounded-lg border px-4 py-3 text-sm ${banner.kind === "ok" ? "border-zone-green/40 bg-zone-green/10 text-zone-green" : "border-zone-red/40 bg-zone-red/10 text-zone-red"}`}>
           {banner.text}
         </div>
       )}
       {loadError && (
-        <div className="rounded-lg border border-red-800 bg-red-950/50 px-4 py-3 text-sm text-red-300">
+        <div className="rounded-lg border border-zone-red/40 bg-zone-red/10 px-4 py-3 text-sm text-zone-red">
           状态加载失败：{loadError}
         </div>
       )}
 
       {/* 连接状态卡 */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+      <div className="panel animate-fade-up p-4">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="font-medium text-zinc-100">连接状态</h3>
             {status === null ? (
               <p className="text-sm text-zinc-500 mt-1">加载中…</p>
             ) : !status.configured ? (
-              <p className="text-sm text-amber-400 mt-1">
+              <p className="text-sm text-zone-amber mt-1">
                 .env 缺少 GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET，参考 .env.example 配置后重启。
               </p>
             ) : status.connected ? (
@@ -208,13 +208,13 @@ export default function GoogleSyncPage() {
               <button
                 onClick={syncNow}
                 disabled={syncing || running}
-                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded text-sm font-medium text-white"
+                className="rounded-lg bg-accent/90 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-50"
               >
                 {syncing || running ? "同步中…" : "立即同步"}
               </button>
               <button
                 onClick={disconnect}
-                className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 px-3 py-1.5 rounded text-xs text-zinc-300"
+                className="rounded border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-zinc-200 transition-colors hover:bg-white/[0.08]"
               >
                 断开
               </button>
@@ -223,7 +223,7 @@ export default function GoogleSyncPage() {
             status?.configured && (
               <a
                 href="/api/google/auth"
-                className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm font-medium text-white"
+                className="rounded-lg bg-accent/90 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent"
               >
                 连接 Google Health
               </a>
@@ -234,14 +234,14 @@ export default function GoogleSyncPage() {
       </div>
 
       {/* 训记(训练记录) */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+      <div className="panel animate-fade-up p-4">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="font-medium text-zinc-100">训练记录(训记)</h3>
             {xunjiInfo === null ? (
               <p className="text-sm text-zinc-500 mt-1">加载中…</p>
             ) : !xunjiInfo.configured ? (
-              <p className="text-sm text-amber-400 mt-1">.env 缺少 XUNJI_API_KEY,在训记 App 内申请后填入。</p>
+              <p className="text-sm text-zone-amber mt-1">.env 缺少 XUNJI_API_KEY,在训记 App 内申请后填入。</p>
             ) : (
               <p className="text-sm text-zinc-400 mt-1">
                 已拉取 {xunjiInfo.datesFetched} 天
@@ -255,14 +255,14 @@ export default function GoogleSyncPage() {
                 <button
                   onClick={() => syncXunji(false)}
                   disabled={xjSyncing}
-                  className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 disabled:opacity-50 px-3 py-1.5 rounded text-xs text-zinc-300"
+                  className="rounded border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-zinc-200 transition-colors hover:bg-white/[0.08] disabled:opacity-50"
                 >
                   {xjSyncing ? "同步中…" : "同步最近 7 天"}
                 </button>
                 <button
                   onClick={() => syncXunji(true)}
                   disabled={xjSyncing}
-                  className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 disabled:opacity-50 px-3 py-1.5 rounded text-xs text-zinc-300"
+                  className="rounded border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-zinc-200 transition-colors hover:bg-white/[0.08] disabled:opacity-50"
                 >
                   强刷 31 天
                 </button>
@@ -277,7 +277,7 @@ export default function GoogleSyncPage() {
 
       {/* 上次同步 */}
       {status?.lastSync && (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+        <div className="panel animate-fade-up p-4">
           <h3 className="font-medium text-zinc-100">上次同步</h3>
           <div className="text-sm text-zinc-400 mt-2 space-y-1">
             <p>
@@ -285,30 +285,30 @@ export default function GoogleSyncPage() {
               <span
                 className={
                   status.lastSync.status === "success"
-                    ? "text-green-400"
+                    ? "text-zone-green"
                     : status.lastSync.status === "partial"
-                      ? "text-amber-400"
+                      ? "text-zone-amber"
                       : status.lastSync.status === "running"
                         ? "text-blue-400"
-                        : "text-red-400"
+                        : "text-zone-red"
                 }
               >
                 {status.lastSync.status}
               </span>
               <span className="text-zinc-500"> · 结束于 {fmtTime(status.lastSync.finished_at)}</span>
             </p>
-            {status.lastSync.message && <p className="text-red-400 break-all">{status.lastSync.message}</p>}
+            {status.lastSync.message && <p className="text-zone-red break-all">{status.lastSync.message}</p>}
           </div>
         </div>
       )}
 
       {/* 今日拉到的数据量 */}
       {status && status.todayCounts.length > 0 && (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+        <div className="panel animate-fade-up p-4">
           <h3 className="font-medium text-zinc-100">今日数据点</h3>
           <div className="flex flex-wrap gap-2 mt-2">
             {status.todayCounts.map(({ data_type, points }) => (
-              <span key={data_type} className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300">
+              <span key={data_type} className="rounded border border-white/[0.08] bg-white/[0.03] px-2 py-1 text-xs text-zinc-300">
                 {TYPE_LABELS[data_type] ?? data_type}: {points}
               </span>
             ))}
@@ -318,11 +318,11 @@ export default function GoogleSyncPage() {
 
       {/* 最近 7 天汇总 */}
       {status && status.metrics.length > 0 && (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 overflow-x-auto">
+        <div className="panel animate-fade-up p-4 overflow-x-auto">
           <h3 className="font-medium text-zinc-100 mb-2">最近 7 天（Google Health）</h3>
           <table className="w-full text-xs text-zinc-300">
             <thead>
-              <tr className="text-left text-zinc-500 border-b border-zinc-800">
+              <tr className="text-left text-zinc-500 border-b border-white/10">
                 <th className="py-1.5 pr-3">日期</th>
                 <th className="py-1.5 pr-3">就枕-起床</th>
                 <th className="py-1.5 pr-3">在床</th>
@@ -337,7 +337,7 @@ export default function GoogleSyncPage() {
             </thead>
             <tbody>
               {status.metrics.map((m) => (
-                <tr key={m.date} className="border-b border-zinc-800/50">
+                <tr key={m.date} className="border-b border-white/5">
                   <td className="py-1.5 pr-3">{m.date}</td>
                   <td className="py-1.5 pr-3">{m.sleep_bedtime && m.sleep_wakeup ? `${m.sleep_bedtime}-${m.sleep_wakeup}` : "—"}</td>
                   <td className="py-1.5 pr-3">{fmtDuration(m.sleep_in_bed_minutes)}</td>
@@ -356,7 +356,7 @@ export default function GoogleSyncPage() {
       )}
 
       {status && status.connected && status.metrics.length === 0 && status.todayCounts.length === 0 && (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 text-sm text-zinc-400">
+        <div className="panel animate-fade-up p-4 text-sm text-zinc-400">
           已连接但还没有数据。确认手环已通过手机 Google Health App 同步上云后点“立即同步”。
         </div>
       )}

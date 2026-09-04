@@ -102,11 +102,11 @@ export default function HealthForm() {
         <button
           type="submit"
           disabled={saving}
-          className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-1.5 rounded text-sm font-medium"
+          className="rounded-lg bg-accent/90 px-4 py-1.5 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-50"
         >
           {saving ? "保存中..." : "保存"}
         </button>
-        {message && <span className="text-sm text-green-400">{message}</span>}
+        {message && <span className="text-sm text-zone-green">{message}</span>}
       </div>
       <div className="grid grid-cols-3 gap-3">
         {fields.map(({ key, label, placeholder }) => (

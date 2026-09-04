@@ -437,11 +437,11 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
         <button
           type="submit"
           disabled={saving}
-          className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-1.5 rounded text-sm font-medium"
+          className="rounded-lg bg-accent/90 px-4 py-1.5 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-50"
         >
           {saving ? "保存中..." : editId ? "更新训练" : "保存训练"}
         </button>
-        {message && <span className="text-sm text-green-400">{message}</span>}
+        {message && <span className="text-sm text-zone-green">{message}</span>}
       </div>
 
       {templates.length > 0 && (
@@ -456,7 +456,7 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
               >
                 {t.name}
               </button>
-              <button type="button" onClick={() => deleteTemplate(t.id)} className="text-zinc-600 hover:text-red-400 text-xs">x</button>
+              <button type="button" onClick={() => deleteTemplate(t.id)} className="text-zinc-600 hover:text-zone-red text-xs">x</button>
             </span>
           ))}
           <button type="button" onClick={saveAsTemplate} className="text-xs text-zinc-500 hover:text-zinc-300 ml-2">
@@ -474,7 +474,7 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
         {blocks.map((block, bi) => {
           const filtered = activeSuggestion === bi ? getFilteredSuggestions(block.exercise_name) : [];
           return (
-            <div key={bi} className="bg-zinc-900 border border-zinc-800 rounded-lg p-3">
+            <div key={bi} className="rounded-lg border border-white/5 bg-white/[0.02] p-3">
               <div className="flex items-center gap-2 mb-2">
                 <div className="relative flex-1" ref={activeSuggestion === bi ? suggestionRef : undefined}>
                   <input
@@ -506,7 +506,7 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
                               <span className="text-xs text-zinc-600">{s.equipment}</span>
                             )}
                             {s.source === "library" ? (
-                              <span className="text-xs text-blue-400">[库]</span>
+                              <span className="text-xs text-accent">[库]</span>
                             ) : s.muscle_group ? (
                               <span className="text-xs text-zinc-500">[{s.muscle_group}]</span>
                             ) : null}
@@ -529,7 +529,7 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
                   <button
                     type="button"
                     onClick={() => removeBlock(bi)}
-                    className="text-red-400 hover:text-red-300 text-sm px-2"
+                    className="text-zone-red hover:text-zone-red/70 text-sm px-2"
                   >
                     删除动作
                   </button>
@@ -593,7 +593,7 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
                       <button
                         type="button"
                         onClick={() => removeSet(bi, si)}
-                        className="text-red-400 hover:text-red-300 text-sm w-6 text-center"
+                        className="text-zone-red hover:text-zone-red/70 text-sm w-6 text-center"
                       >
                         x
                       </button>
@@ -607,7 +607,7 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
               <button
                 type="button"
                 onClick={() => addSet(bi)}
-                className="text-blue-400 hover:text-blue-300 text-xs mt-2"
+                className="text-accent hover:text-accent/80 text-xs mt-2"
               >
                 + 添加一组
               </button>

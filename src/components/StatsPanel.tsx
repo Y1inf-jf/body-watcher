@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Card, CardTitle } from "./ui/Card";
 
 interface Stats {
   totalSessions: number;
@@ -21,44 +22,47 @@ export default function StatsPanel() {
       .catch(() => setError("加载统计数据失败"));
   }, []);
 
-  if (error) return <div className="text-red-400 text-sm">{error}</div>;
+  if (error) return <div className="text-zone-red text-sm">{error}</div>;
   if (!stats) return null;
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
-      <h3 className="text-sm font-medium text-zinc-400 mb-3">训练统计</h3>
+    <Card className="animate-fade-up p-4">
+      <CardTitle className="mb-3">Training Stats · 训练统计</CardTitle>
       <div className="grid grid-cols-4 gap-3">
-        <div className="border border-zinc-800 rounded p-2 text-center">
-          <div className="text-lg font-bold text-zinc-200">{stats.totalSessions}</div>
-          <div className="text-xs text-zinc-500">总训练</div>
+        <div className="rounded-lg border border-white/5 bg-white/[0.02] p-2 text-center">
+          <div className="font-mono text-lg font-bold tabular-nums text-zinc-100">{stats.totalSessions}</div>
+          <div className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">总训练</div>
         </div>
-        <div className="border border-zinc-800 rounded p-2 text-center">
-          <div className="text-lg font-bold text-blue-400">{stats.monthSessions}</div>
-          <div className="text-xs text-zinc-500">本月训练</div>
+        <div className="rounded-lg border border-white/5 bg-white/[0.02] p-2 text-center">
+          <div className="font-mono text-lg font-bold tabular-nums text-accent">{stats.monthSessions}</div>
+          <div className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">本月训练</div>
         </div>
-        <div className="border border-zinc-800 rounded p-2 text-center">
-          <div className="text-lg font-bold text-zinc-200">{stats.totalVolume.toFixed(0)}</div>
-          <div className="text-xs text-zinc-500">总容量 (kg)</div>
+        <div className="rounded-lg border border-white/5 bg-white/[0.02] p-2 text-center">
+          <div className="font-mono text-lg font-bold tabular-nums text-zinc-100">{stats.totalVolume.toFixed(0)}</div>
+          <div className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">总容量 (kg)</div>
         </div>
-        <div className="border border-zinc-800 rounded p-2 text-center">
-          <div className="text-lg font-bold text-green-400">{stats.monthVolume.toFixed(0)}</div>
-          <div className="text-xs text-zinc-500">本月容量 (kg)</div>
+        <div className="rounded-lg border border-white/5 bg-white/[0.02] p-2 text-center">
+          <div className="font-mono text-lg font-bold tabular-nums text-zone-green">{stats.monthVolume.toFixed(0)}</div>
+          <div className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">本月容量 (kg)</div>
         </div>
       </div>
       {stats.topExercises.length > 0 && (
         <div className="mt-3">
-          <div className="text-xs text-zinc-500 mb-1">最常练</div>
-          <div className="flex gap-2 flex-wrap">
+          <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-zinc-500">最常练</div>
+          <div className="flex flex-wrap gap-2">
             {stats.topExercises.map((e, i) => (
-              <span key={e.exercise_name} className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300">
-                <span className="text-zinc-500 mr-1">{i + 1}.</span>
+              <span
+                key={e.exercise_name}
+                className="rounded border border-white/[0.08] bg-white/[0.03] px-2 py-1 text-xs text-zinc-300"
+              >
+                <span className="mr-1 font-mono text-zinc-500">{i + 1}.</span>
                 {e.exercise_name}
-                <span className="text-zinc-500 ml-1">({e.count}次)</span>
+                <span className="ml-1 font-mono text-zinc-500">({e.count}次)</span>
               </span>
             ))}
           </div>
         </div>
       )}
-    </div>
+    </Card>
   );
 }

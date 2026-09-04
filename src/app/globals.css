@@ -1,13 +1,52 @@
 @import "tailwindcss";
 
+@theme {
+  /* 状态分区色:恢复分 / ACWR / form 共用,由 src/lib/zone-meta.ts 引用 */
+  --color-zone-green: #00e08c;
+  --color-zone-amber: #ffb224;
+  --color-zone-red: #ff5c5c;
+  --color-accent: #22d3ee;
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "Cascadia Mono", monospace;
+
+  --animate-fade-up: fade-up 0.5s ease-out both;
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}
+
 :root {
-  --background: #09090b;
-  --foreground: #fafafa;
+  color-scheme: dark;
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
+  color: #fafafa;
+  background: #09090b;
+}
+
+/* 统一卡片配方:微渐出 + 极细亮边(替代原 zinc-900/zinc-800 手写组合) */
+.panel {
+  border-radius: 0.75rem;
+  border: 1px solid rgb(255 255 255 / 0.07);
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.03), transparent 42%),
+    #0f0f12;
+}
+
+.panel-glow {
+  box-shadow: 0 0 52px -22px var(--panel-glow-color, transparent);
+}
+
+::selection {
+  background: rgb(34 211 238 / 0.25);
 }
 
 input[type="number"]::-webkit-inner-spin-button,

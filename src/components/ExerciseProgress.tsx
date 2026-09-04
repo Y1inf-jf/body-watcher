@@ -70,15 +70,15 @@ export default function ExerciseProgress() {
   );
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+    <div className="panel animate-fade-up p-4">
       <div className="flex items-center justify-between mb-3 gap-2">
-        <h3 className="text-sm font-medium text-zinc-400">渐进超负荷追踪</h3>
+        <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">Overload · 渐进超负荷追踪</h3>
         <div className="flex items-center gap-2">
           {exercises.length > 0 && (
             <select
               value={selected}
               onChange={(e) => setSelected(e.target.value)}
-              className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-sm"
+              className="rounded border border-white/10 bg-white/[0.04] px-2 py-1 text-sm text-zinc-200"
             >
               {exercises.map((e) => (
                 <option key={e.exercise_name} value={e.exercise_name}>
@@ -90,7 +90,7 @@ export default function ExerciseProgress() {
           <select
             value={formula}
             onChange={(e) => setFormula(e.target.value as FormulaKey)}
-            className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-sm"
+            className="rounded border border-white/10 bg-white/[0.04] px-2 py-1 text-sm text-zinc-200"
             title="1RM 估算公式"
           >
             {(Object.keys(FORMULAS) as FormulaKey[]).map((k) => (
@@ -103,7 +103,7 @@ export default function ExerciseProgress() {
       </div>
 
       {error ? (
-        <p className="text-red-400 text-sm">{error}</p>
+        <p className="text-zone-red text-sm">{error}</p>
       ) : exercises.length === 0 || progress.length === 0 ? (
         <p className="text-zinc-600 text-sm">暂无数据</p>
       ) : (
@@ -112,7 +112,7 @@ export default function ExerciseProgress() {
             {latest?.max_weight != null && (
               <div>
                 <span className="text-xs text-zinc-500">最重</span>
-                <span className="text-lg font-bold text-zinc-200 ml-1">
+                <span className="font-mono text-lg font-bold tabular-nums text-zinc-100 ml-1">
                   {latest.max_weight}kg
                 </span>
                 <span className="text-xs text-zinc-500 ml-1">×{latest.max_weight_reps}</span>
@@ -121,7 +121,7 @@ export default function ExerciseProgress() {
             {latest1RM != null && (
               <div>
                 <span className="text-xs text-zinc-500">估算 1RM ({FORMULAS[formula].label})</span>
-                <span className="text-lg font-bold text-amber-400 ml-1">
+                <span className="font-mono text-lg font-bold tabular-nums text-zone-amber ml-1">
                   {Math.round(latest1RM)}kg
                 </span>
               </div>
@@ -129,30 +129,30 @@ export default function ExerciseProgress() {
           </div>
           <ResponsiveContainer width="100%" height={200}>
             <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-              <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#71717a" }} />
-              <YAxis tick={{ fontSize: 11, fill: "#71717a" }} width={40} />
+              <CartesianGrid strokeDasharray="3 6" stroke="rgba(255,255,255,0.06)" vertical={false} />
+              <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#71717a" }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 10, fill: "#71717a" }} width={40} axisLine={false} tickLine={false} />
               <Tooltip
                 contentStyle={{
-                  backgroundColor: "#18181b",
-                  border: "1px solid #3f3f46",
-                  borderRadius: "6px",
+                  backgroundColor: "#101014",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  borderRadius: 8,
                   fontSize: 12,
                 }}
               />
               <Line
                 type="monotone"
                 dataKey="weight"
-                stroke="#22c55e"
+                stroke="#00e08c"
                 name="最重重量 (kg)"
                 strokeWidth={2}
-                dot={{ r: 3, fill: "#22c55e" }}
+                dot={{ r: 3, fill: "#00e08c" }}
                 connectNulls
               />
               <Line
                 type="monotone"
                 dataKey="est_1rm"
-                stroke="#f59e0b"
+                stroke="#ffb224"
                 name={`估算 1RM ${FORMULAS[formula].label} (kg)`}
                 strokeWidth={2}
                 strokeDasharray="5 5"

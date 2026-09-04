@@ -23,7 +23,7 @@ export default function ErrorPage({
       </p>
       <button
         onClick={() => unstable_retry()}
-        className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm font-medium"
+        className="rounded-lg bg-accent/90 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent"
       >
         重试
       </button>
