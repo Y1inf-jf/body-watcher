@@ -90,6 +90,57 @@ function createTables(db: Database.Database) {
       image_url TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_exercise_library_name ON exercise_library(name);
+
+    CREATE TABLE IF NOT EXISTS google_oauth_tokens (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      access_token TEXT NOT NULL,
+      refresh_token TEXT,
+      expires_at INTEGER NOT NULL,
+      scope TEXT,
+      updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS google_daily_metrics (
+      date TEXT PRIMARY KEY,
+      sleep_in_bed_minutes INTEGER,
+      sleep_deep_minutes INTEGER,
+      sleep_rem_minutes INTEGER,
+      sleep_light_minutes INTEGER,
+      sleep_awake_minutes INTEGER,
+      sleep_bedtime TEXT,
+      sleep_wakeup TEXT,
+      hrv_avg_ms REAL,
+      hrv_rmssd_deep_ms REAL,
+      hrv_nonrem_hr REAL,
+      hrv_entropy REAL,
+      resting_hr INTEGER,
+      respiratory_rate REAL,
+      spo2_avg REAL,
+      steps INTEGER,
+      weight_kg REAL,
+      exercise_count INTEGER,
+      exercise_minutes INTEGER,
+      synced_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS google_raw_data (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      data_type TEXT NOT NULL,
+      data_date TEXT NOT NULL,
+      point_count INTEGER,
+      payload TEXT NOT NULL,
+      fetched_at TEXT DEFAULT (datetime('now', 'localtime')),
+      UNIQUE(data_type, data_date)
+    );
+
+    CREATE TABLE IF NOT EXISTS google_sync_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      started_at TEXT,
+      finished_at TEXT,
+      status TEXT,
+      message TEXT,
+      types_synced TEXT
+    );
   `);
 }
 
@@ -522,4 +573,177 @@ export function exportAllTraining() {
 export function exportAllHealth() {
   const db = getDb();
   return db.prepare("SELECT * FROM daily_health ORDER BY date ASC").all();
+}
+
+// --- Google Health sync ---
+
+export interface GoogleTokens {
+  access_token: string;
+  refresh_token: string | null;
+  expires_at: number;
+  scope: string | null;
+}
+
+export function saveGoogleTokens(tokens: GoogleTokens) {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO google_oauth_tokens (id, access_token, refresh_token, expires_at, scope, updated_at)
+    VALUES (1, @access_token, @refresh_token, @expires_at, @scope, datetime('now', 'localtime'))
+    ON CONFLICT(id) DO UPDATE SET
+      access_token = excluded.access_token,
+      refresh_token = COALESCE(excluded.refresh_token, google_oauth_tokens.refresh_token),
+      expires_at = excluded.expires_at,
+      scope = COALESCE(excluded.scope, google_oauth_tokens.scope),
+      updated_at = datetime('now', 'localtime')
+  `).run(tokens);
+}
+
+export function getGoogleTokens(): GoogleTokens | undefined {
+  const db = getDb();
+  return db.prepare("SELECT access_token, refresh_token, expires_at, scope FROM google_oauth_tokens WHERE id = 1").get() as GoogleTokens | undefined;
+}
+
+export function deleteGoogleTokens() {
+  const db = getDb();
+  db.prepare("DELETE FROM google_oauth_tokens WHERE id = 1").run();
+}
+
+export interface GoogleDailyMetricsInput {
+  date: string;
+  sleep_in_bed_minutes?: number | null;
+  sleep_deep_minutes?: number | null;
+  sleep_rem_minutes?: number | null;
+  sleep_light_minutes?: number | null;
+  sleep_awake_minutes?: number | null;
+  sleep_bedtime?: string | null;
+  sleep_wakeup?: string | null;
+  hrv_avg_ms?: number | null;
+  hrv_rmssd_deep_ms?: number | null;
+  hrv_nonrem_hr?: number | null;
+  hrv_entropy?: number | null;
+  resting_hr?: number | null;
+  respiratory_rate?: number | null;
+  spo2_avg?: number | null;
+  steps?: number | null;
+  weight_kg?: number | null;
+  exercise_count?: number | null;
+  exercise_minutes?: number | null;
+}
+
+// 部分更新：各数据类型只写自己的列，未涉及的列保留旧值（与 upsertHealth 同模式）。
+export function upsertGoogleDailyMetrics(data: GoogleDailyMetricsInput) {
+  const db = getDb();
+  // better-sqlite3 要求语句中每个命名参数都有值，先铺全列默认值再覆盖传入项。
+  const row: Record<string, unknown> = {
+    sleep_in_bed_minutes: null,
+    sleep_deep_minutes: null,
+    sleep_rem_minutes: null,
+    sleep_light_minutes: null,
+    sleep_awake_minutes: null,
+    sleep_bedtime: null,
+    sleep_wakeup: null,
+    hrv_avg_ms: null,
+    hrv_rmssd_deep_ms: null,
+    hrv_nonrem_hr: null,
+    hrv_entropy: null,
+    resting_hr: null,
+    respiratory_rate: null,
+    spo2_avg: null,
+    steps: null,
+    weight_kg: null,
+    exercise_count: null,
+    exercise_minutes: null,
+    synced_at: new Date().toISOString(),
+    ...data,
+  };
+  db.prepare(`
+    INSERT INTO google_daily_metrics (
+      date, sleep_in_bed_minutes, sleep_deep_minutes, sleep_rem_minutes, sleep_light_minutes, sleep_awake_minutes,
+      sleep_bedtime, sleep_wakeup, hrv_avg_ms, hrv_rmssd_deep_ms, hrv_nonrem_hr, hrv_entropy,
+      resting_hr, respiratory_rate, spo2_avg, steps, weight_kg, exercise_count, exercise_minutes, synced_at
+    ) VALUES (
+      @date, @sleep_in_bed_minutes, @sleep_deep_minutes, @sleep_rem_minutes, @sleep_light_minutes, @sleep_awake_minutes,
+      @sleep_bedtime, @sleep_wakeup, @hrv_avg_ms, @hrv_rmssd_deep_ms, @hrv_nonrem_hr, @hrv_entropy,
+      @resting_hr, @respiratory_rate, @spo2_avg, @steps, @weight_kg, @exercise_count, @exercise_minutes, @synced_at
+    )
+    ON CONFLICT(date) DO UPDATE SET
+      sleep_in_bed_minutes = COALESCE(excluded.sleep_in_bed_minutes, google_daily_metrics.sleep_in_bed_minutes),
+      sleep_deep_minutes = COALESCE(excluded.sleep_deep_minutes, google_daily_metrics.sleep_deep_minutes),
+      sleep_rem_minutes = COALESCE(excluded.sleep_rem_minutes, google_daily_metrics.sleep_rem_minutes),
+      sleep_light_minutes = COALESCE(excluded.sleep_light_minutes, google_daily_metrics.sleep_light_minutes),
+      sleep_awake_minutes = COALESCE(excluded.sleep_awake_minutes, google_daily_metrics.sleep_awake_minutes),
+      sleep_bedtime = COALESCE(excluded.sleep_bedtime, google_daily_metrics.sleep_bedtime),
+      sleep_wakeup = COALESCE(excluded.sleep_wakeup, google_daily_metrics.sleep_wakeup),
+      hrv_avg_ms = COALESCE(excluded.hrv_avg_ms, google_daily_metrics.hrv_avg_ms),
+      hrv_rmssd_deep_ms = COALESCE(excluded.hrv_rmssd_deep_ms, google_daily_metrics.hrv_rmssd_deep_ms),
+      hrv_nonrem_hr = COALESCE(excluded.hrv_nonrem_hr, google_daily_metrics.hrv_nonrem_hr),
+      hrv_entropy = COALESCE(excluded.hrv_entropy, google_daily_metrics.hrv_entropy),
+      resting_hr = COALESCE(excluded.resting_hr, google_daily_metrics.resting_hr),
+      respiratory_rate = COALESCE(excluded.respiratory_rate, google_daily_metrics.respiratory_rate),
+      spo2_avg = COALESCE(excluded.spo2_avg, google_daily_metrics.spo2_avg),
+      steps = COALESCE(excluded.steps, google_daily_metrics.steps),
+      weight_kg = COALESCE(excluded.weight_kg, google_daily_metrics.weight_kg),
+      exercise_count = COALESCE(excluded.exercise_count, google_daily_metrics.exercise_count),
+      exercise_minutes = COALESCE(excluded.exercise_minutes, google_daily_metrics.exercise_minutes),
+      synced_at = excluded.synced_at
+  `).run(row);
+}
+
+export function queryGoogleDailyMetrics(days: number = 7) {
+  const db = getDb();
+  return db.prepare(`
+    SELECT * FROM google_daily_metrics
+    ORDER BY date DESC LIMIT ?
+  `).all(days);
+}
+
+export function saveGoogleRawData(dataType: string, dataDate: string, points: unknown[]) {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO google_raw_data (data_type, data_date, point_count, payload, fetched_at)
+    VALUES (?, ?, ?, ?, datetime('now', 'localtime'))
+    ON CONFLICT(data_type, data_date) DO UPDATE SET
+      point_count = excluded.point_count,
+      payload = excluded.payload,
+      fetched_at = excluded.fetched_at
+  `).run(dataType, dataDate, points.length, JSON.stringify(points));
+}
+
+export function queryGoogleRawTypeCounts(date: string) {
+  const db = getDb();
+  return db.prepare(`
+    SELECT data_type, SUM(point_count) as points
+    FROM google_raw_data
+    WHERE data_date >= ?
+    GROUP BY data_type
+  `).all(date) as { data_type: string; points: number }[];
+}
+
+export function insertSyncLog(startedAt: string): number {
+  const db = getDb();
+  return Number(db.prepare("INSERT INTO google_sync_log (started_at, status) VALUES (?, 'running')").run(startedAt).lastInsertRowid);
+}
+
+export function finishSyncLog(id: number, fields: { finished_at: string; status: string; message?: string | null; types_synced?: string | null }) {
+  const db = getDb();
+  db.prepare(`
+    UPDATE google_sync_log
+    SET finished_at = @finished_at, status = @status, message = @message, types_synced = @types_synced
+    WHERE id = ?
+  `).run({ message: null, types_synced: null, ...fields }, id);
+}
+
+export function getLastSyncLog() {
+  const db = getDb();
+  return db.prepare("SELECT * FROM google_sync_log ORDER BY id DESC LIMIT 1").get() as Record<string, unknown> | undefined;
+}
+
+export function getLastSuccessfulSyncDate(): string | null {
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT finished_at FROM google_sync_log
+    WHERE status = 'success' AND finished_at IS NOT NULL
+    ORDER BY id DESC LIMIT 1
+  `).get() as { finished_at: string } | undefined;
+  return row ? row.finished_at.slice(0, 10) : null;
 }

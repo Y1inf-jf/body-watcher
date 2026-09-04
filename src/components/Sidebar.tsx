@@ -7,6 +7,7 @@ const links = [
   { href: "/", label: "总览" },
   { href: "/input", label: "数据录入" },
   { href: "/plan", label: "训练计划" },
+  { href: "/google", label: "数据同步" },
 ];
 
 export default function Sidebar() {
