@@ -141,6 +141,12 @@ function createTables(db: Database.Database) {
       message TEXT,
       types_synced TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS xunji_fetch_log (
+      datestr TEXT PRIMARY KEY,
+      trains_found INTEGER,
+      fetched_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
   `);
 }
 
@@ -155,6 +161,17 @@ function migrate(db: Database.Database) {
   const healthCols = db.prepare("PRAGMA table_info(daily_health)").all() as { name: string }[];
   if (!healthCols.find((c) => c.name === "rest_day")) {
     db.exec("ALTER TABLE daily_health ADD COLUMN rest_day INTEGER DEFAULT 0");
+  }
+  // 训记镜像:来源与外部 ID 用于幂等去重,title 存训练名(如"蹲"/"推")。
+  const logCols = db.prepare("PRAGMA table_info(training_log)").all() as { name: string }[];
+  if (!logCols.find((c) => c.name === "source")) {
+    db.exec("ALTER TABLE training_log ADD COLUMN source TEXT DEFAULT 'manual'");
+  }
+  if (!logCols.find((c) => c.name === "external_id")) {
+    db.exec("ALTER TABLE training_log ADD COLUMN external_id TEXT");
+  }
+  if (!logCols.find((c) => c.name === "title")) {
+    db.exec("ALTER TABLE training_log ADD COLUMN title TEXT");
   }
 }
 
@@ -756,4 +773,80 @@ export function getLastSuccessfulSyncDate(): string | null {
     ORDER BY id DESC LIMIT 1
   `).get() as { finished_at: string } | undefined;
   return row ? row.finished_at.slice(0, 10) : null;
+}
+
+// --- XunJi (训记) sync ---
+
+export interface XunjiExerciseRow {
+  exercise_name: string;
+  muscle_group: string;
+  reps: number | null;
+  weight: number | null;
+  rpe: number | null;
+}
+
+export function findTrainingLogByExternalId(externalId: string): { id: number } | undefined {
+  const db = getDb();
+  return db
+    .prepare("SELECT id FROM training_log WHERE source = 'xunji' AND external_id = ?")
+    .get(externalId) as { id: number } | undefined;
+}
+
+// 每组一行(training_exercise.sets=1),与手动录入的存储约定一致。返回是否为新建。
+export function upsertXunjiTraining(
+  data: { date: string; title: string | null; duration: number; notes: string | null; external_id: string },
+  exercises: XunjiExerciseRow[]
+): { logId: number; created: boolean } {
+  const db = getDb();
+  const existing = findTrainingLogByExternalId(data.external_id);
+  const tx = db.transaction(() => {
+    let logId: number;
+    const created = !existing;
+    if (existing) {
+      db.prepare(`
+        UPDATE training_log SET date = @date, duration = @duration, notes = @notes, title = @title
+        WHERE id = @id
+      `).run({ ...data, id: existing.id });
+      logId = existing.id;
+      db.prepare("DELETE FROM training_exercise WHERE training_log_id = ?").run(logId);
+    } else {
+      const r = db.prepare(`
+        INSERT INTO training_log (date, duration, notes, source, external_id, title)
+        VALUES (@date, @duration, @notes, 'xunji', @external_id, @title)
+      `).run(data);
+      logId = Number(r.lastInsertRowid);
+    }
+    const ins = db.prepare(`
+      INSERT INTO training_exercise (training_log_id, exercise_name, muscle_group, sets, reps, weight, bodyweight, rpe)
+      VALUES (?, @exercise_name, @muscle_group, 1, @reps, @weight, 0, @rpe)
+    `);
+    for (const ex of exercises) ins.run(logId, ex);
+    return { logId, created };
+  });
+  return tx();
+}
+
+export function markDatestrFetched(datestr: string, trainsFound: number) {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO xunji_fetch_log (datestr, trains_found, fetched_at)
+    VALUES (?, ?, datetime('now', 'localtime'))
+    ON CONFLICT(datestr) DO UPDATE SET
+      trains_found = excluded.trains_found,
+      fetched_at = excluded.fetched_at
+  `).run(datestr, trainsFound);
+}
+
+export function getFetchedDatestrs(): string[] {
+  const db = getDb();
+  return (db.prepare("SELECT datestr FROM xunji_fetch_log").all() as { datestr: string }[]).map((r) => r.datestr);
+}
+
+export function getXunjiFetchInfo() {
+  const db = getDb();
+  const datesFetched = (db.prepare("SELECT COUNT(*) as n FROM xunji_fetch_log").get() as { n: number }).n;
+  const latest = db
+    .prepare("SELECT datestr, trains_found, fetched_at FROM xunji_fetch_log ORDER BY datestr DESC LIMIT 1")
+    .get() as { datestr: string; trains_found: number; fetched_at: string } | undefined;
+  return { datesFetched, latest };
 }

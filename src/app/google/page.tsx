@@ -55,11 +55,19 @@ function fmtDuration(min?: number | null): string {
   return `${Math.floor(min / 60)}h${String(min % 60).padStart(2, "0")}m`;
 }
 
+interface XunjiInfo {
+  configured: boolean;
+  datesFetched: number;
+  latest?: { datestr: string; trains_found: number; fetched_at: string };
+}
+
 export default function GoogleSyncPage() {
   const [status, setStatus] = useState<StatusData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [xunjiInfo, setXunjiInfo] = useState<XunjiInfo | null>(null);
+  const [xjSyncing, setXjSyncing] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
@@ -73,11 +81,21 @@ export default function GoogleSyncPage() {
     }
   }, []);
 
+  const loadXunji = useCallback(async () => {
+    try {
+      const res = await fetch("/api/xunji/sync");
+      if (res.ok) setXunjiInfo((await res.json()) as XunjiInfo);
+    } catch {
+      // 训记状态加载失败不阻塞页面其余部分
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const params = new URLSearchParams(window.location.search);
       await load();
+      await loadXunji();
       if (cancelled) return;
       // 授权回跳的结果提示只读一次
       if (params.get("connected")) setBanner({ kind: "ok", text: "Google Health 连接成功" });
@@ -88,7 +106,25 @@ export default function GoogleSyncPage() {
       cancelled = true;
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [load]);
+  }, [load, loadXunji]);
+
+  async function syncXunji(force: boolean) {
+    setXjSyncing(true);
+    try {
+      const res = await fetch(`/api/xunji/sync${force ? "?force=1&days=31" : ""}`, { method: "POST" });
+      const body = await res.json();
+      if (!res.ok) {
+        setBanner({ kind: "err", text: `训记同步失败：${(body.errors as string[] | undefined)?.join("；") ?? res.status}` });
+      } else {
+        setBanner({ kind: "ok", text: `训记同步完成：新增 ${body.created} 条、更新 ${body.updated} 条${body.skippedHealthMirrors ? `、跳过健康回灌 ${body.skippedHealthMirrors} 条` : ""}` });
+      }
+    } catch (err) {
+      setBanner({ kind: "err", text: `训记同步请求失败：${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      setXjSyncing(false);
+      loadXunji();
+    }
+  }
 
   // 同步进行中时轮询状态（自动同步可能由 instrumentation 触发）
   useEffect(() => {
@@ -196,6 +232,48 @@ export default function GoogleSyncPage() {
         </div>
         {running && <p className="text-xs text-zinc-500 mt-2">一次同步正在进行中，完成后本页自动刷新…</p>}
       </div>
+
+      {/* 训记(训练记录) */}
+      <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-medium text-zinc-100">训练记录(训记)</h3>
+            {xunjiInfo === null ? (
+              <p className="text-sm text-zinc-500 mt-1">加载中…</p>
+            ) : !xunjiInfo.configured ? (
+              <p className="text-sm text-amber-400 mt-1">.env 缺少 XUNJI_API_KEY,在训记 App 内申请后填入。</p>
+            ) : (
+              <p className="text-sm text-zinc-400 mt-1">
+                已拉取 {xunjiInfo.datesFetched} 天
+                {xunjiInfo.latest && `,最近 ${xunjiInfo.latest.datestr}(发现 ${xunjiInfo.latest.trains_found} 条训练)`}
+              </p>
+            )}
+          </div>
+          <div className="flex gap-2">
+            {xunjiInfo?.configured && (
+              <>
+                <button
+                  onClick={() => syncXunji(false)}
+                  disabled={xjSyncing}
+                  className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 disabled:opacity-50 px-3 py-1.5 rounded text-xs text-zinc-300"
+                >
+                  {xjSyncing ? "同步中…" : "同步最近 7 天"}
+                </button>
+                <button
+                  onClick={() => syncXunji(true)}
+                  disabled={xjSyncing}
+                  className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 disabled:opacity-50 px-3 py-1.5 rounded text-xs text-zinc-300"
+                >
+                  强刷 31 天
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+        <p className="text-xs text-zinc-500 mt-2">训记里的训练会镜像进训练记录(动作×组×次×重量),供恢复分析与计划生成使用。</p>
+      </div>
+
+      {/* 训练记录(训记)结束 */}
 
       {/* 上次同步 */}
       {status?.lastSync && (

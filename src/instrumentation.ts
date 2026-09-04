@@ -14,6 +14,10 @@ export async function register() {
   // 启动稍等片刻再同步，避免拖慢服务就绪；失败只记日志（详情在 google_sync_log / 状态页）。
   setTimeout(() => {
     runSync().catch((err) => console.error("[google-sync]", err instanceof Error ? err.message : err));
+    // 训记按天拉取即可，启动时补最近 7 天。
+    import("@/lib/xunji")
+      .then((m) => m.runXunjiSync())
+      .catch((err) => console.error("[xunji-sync]", err instanceof Error ? err.message : err));
   }, 5000).unref();
 
   if (Number.isFinite(minutes) && minutes > 0) {
