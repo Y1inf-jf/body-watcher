@@ -5,7 +5,9 @@ import { usePathname } from "next/navigation";
 
 const links = [
   { href: "/", label: "总览" },
-  { href: "/input", label: "数据录入" },
+  // 数据已全部来自第三方同步(Google Health + 训记),手动录入入口暂时隐藏。
+  // 路由 /input 仍保留:计划"执行"按钮的预填流程还在用。
+  // { href: "/input", label: "数据录入" },
   { href: "/plan", label: "训练计划" },
   { href: "/google", label: "数据同步" },
 ];

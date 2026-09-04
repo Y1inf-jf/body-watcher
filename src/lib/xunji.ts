@@ -134,7 +134,8 @@ async function syncAll(opts: { days: number; force: boolean }): Promise<XunjiSyn
   let skippedHealthMirrors = 0;
   const touchedDates: string[] = [];
 
-  const days = Math.min(Math.max(opts.days, 1), 92);
+  // 上限 366:足够一次全量回填一年;日常同步只传 7。
+  const days = Math.min(Math.max(opts.days, 1), 366);
   const fetched = new Set(getFetchedDatestrs());
   const today = new Date();
   const dates: string[] = [];
@@ -145,6 +146,10 @@ async function syncAll(opts: { days: number; force: boolean }): Promise<XunjiSyn
   }
 
   for (const datestr of dates) {
+    // 批量回填时限速,避免短时间打满接口。
+    if (dates.length > 10) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
     try {
       const trains = await fetchTrainDate(datestr);
       for (const train of trains) {
