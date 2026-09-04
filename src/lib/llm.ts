@@ -1,9 +1,9 @@
 import { streamText, stepCountIs, type StopCondition, type ToolSet } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 
-const BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com";
-const API_KEY = process.env.DEEPSEEK_API_KEY || "";
-const MODEL = process.env.LLM_MODEL || "mimo-v2.5-pro";
+const BASE_URL = process.env.LLM_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
+const API_KEY = process.env.LLM_API_KEY || "";
+const MODEL = process.env.LLM_MODEL || "qwen3.8-flash";
 
 /**
  * 基于 Vercel AI SDK v6 的 agent 流。
@@ -19,14 +19,14 @@ export type AgentTools = ToolSet;
 
 export function getProvider() {
   if (!API_KEY) {
-    throw new Error("DEEPSEEK_API_KEY is not configured");
+    throw new Error("LLM_API_KEY is not configured");
   }
-  // 必须用 .chat() 走 Chat Completions：DeepSeek 等 OpenAI 兼容服务不实现 Responses API。
-  // 非官方模型名（如 mimo-v2.5-pro）不在 OpenAIChatModelId 联合类型里，需断言。
+  // 必须用 .chat() 走 Chat Completions：百炼兼容模式等 OpenAI 兼容服务不实现 Responses API。
+  // 非官方模型名（如 qwen3.8-flash）不在 OpenAIChatModelId 联合类型里，需断言。
   return createOpenAI({
     baseURL: BASE_URL,
     apiKey: API_KEY,
-    name: "deepseek",
+    name: "bailian",
   }).chat(MODEL as Parameters<ReturnType<typeof createOpenAI>["chat"]>[0]);
 }
 
@@ -55,7 +55,8 @@ export function agentLoop(
     // v6 用 stopWhen 取代 maxSteps；默认 stepCountIs(1) 不会循环，必须显式设置。
     stopWhen: [stepCountIs(maxSteps), ...extraStopConditions],
     maxRetries: 2,
-    timeout: { totalMs: 60_000 },
+    // 思考型模型带工具循环的单次生成可达 1 分钟以上，60s 会中途截断。
+    timeout: { totalMs: 180_000 },
   });
 
   // toTextStreamResponse 返回 web Response；取其 body 作为 ReadableStream。

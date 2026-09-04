@@ -1,4 +1,4 @@
-import { tool, hasToolCall } from "ai";
+import { tool } from "ai";
 import { z } from "zod";
 import { agentLoop, type AgentTools } from "./llm";
 import {
@@ -51,6 +51,8 @@ export const SYSTEM_PROMPT = `你是一位专业的力量训练教练和运动�
 - recovery_assessment：恢复状态评估
 - exercises：动作列表 JSON 字符串（每项包含 name、muscle_group、sets、reps、weight）
 - advice：注意事项和建议
+
+保存动作只做一次；保存完成后，用 3-6 句话总结本次计划的恢复判断与训练重点，作为最终回复。
 
 请使用中文回复。`;
 
@@ -120,9 +122,9 @@ export function createAgentStream() {
     SYSTEM_PROMPT,
     `今天是 ${today}，请根据我的数据生成下一次训练计划。`,
     agentTools,
-    6,
-    // 一旦保存了计划就停止循环，防止模型在单次会话内重复写库。
-    [hasToolCall("save_training_plan")]
+    6
+    // 不设 hasToolCall 停止条件：思考型模型（如 qwen3.8）在工具步骤不输出正文，
+    // 保存即停会导致整条流 0 字节；改为靠 maxSteps 封顶 + prompt 要求"只保存一次"。
   );
 }
 
