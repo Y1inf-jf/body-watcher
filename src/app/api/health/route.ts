@@ -5,8 +5,9 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const { date, hrv, resting_hr, systolic, diastolic, sleep_hours, sleep_quality, weight, body_fat, rpe, notes } = body;
 
-  if (!date) {
-    return NextResponse.json({ error: "date is required" }, { status: 400 });
+  // 日期是一切窗口查询的主键口径,格式错了会静默掉出所有统计,必须挡在门外。
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
+    return NextResponse.json({ error: "date must be YYYY-MM-DD" }, { status: 400 });
   }
 
   upsertHealth({

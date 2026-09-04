@@ -12,6 +12,8 @@ import {
 import {
   computeRecoveryFeatures,
   computeRecoveryScore,
+  localToday,
+  localDaysAgo,
   summarizeTrainingLoad,
   type GoogleMetricRow,
   type TrainingLogRow,
@@ -71,16 +73,16 @@ export const agentTools: AgentTools = {
       // 30 天窗口：覆盖 21 天基线池 + 当天；明细只回传最近 14 天控制 payload。
       const rows = queryGoogleDailyMetricsRange(30) as GoogleMetricRow[];
       const recovery = computeRecoveryFeatures(rows);
-      // 35 天训练窗口覆盖 ACWR 的 28 天慢性池。
-      const trainingStatus = computeTrainingStatus(
-        queryTrainingHistoryDetailed(35) as TrainingLogRow[]
-      );
+      // 35 天训练窗口覆盖 ACWR 的 28 天慢性池；近 7 天汇总从同一份结果本地切片,
+      // 避免再发一次 N+1 查询且与 trainingStatus 的周窗口口径一致。
+      const logs = queryTrainingHistoryDetailed(35) as TrainingLogRow[];
+      const trainingStatus = computeTrainingStatus(logs);
       return {
         recovery,
         recoveryScore: computeRecoveryScore(recovery),
         trainingStatus,
         sleepNeed: computeSleepNeed(recovery.sleep, trainingStatus.yesterdayLoad),
-        training: summarizeTrainingLoad(queryTrainingHistoryDetailed(7) as TrainingLogRow[]),
+        training: summarizeTrainingLoad(logs.filter((l) => l.date >= localDaysAgo(6))),
         muscleRecovery: queryMuscleRecovery(),
         recent: rows.slice(-14),
       };
@@ -129,13 +131,13 @@ export const agentTools: AgentTools = {
   }),
 };
 
-export function createAgentStream() {
-  const today = new Date().toISOString().split("T")[0];
+export function createAgentStream(signal?: AbortSignal) {
   return agentLoop(
     SYSTEM_PROMPT,
-    `今天是 ${today}，请根据我的数据生成下一次训练计划。`,
+    `今天是 ${localToday()}，请根据我的数据生成下一次训练计划。`,
     agentTools,
-    6
+    6,
+    { signal }
     // 不设 hasToolCall 停止条件：思考型模型（如 qwen3.8）在工具步骤不输出正文，
     // 保存即停会导致整条流 0 字节；改为靠 maxSteps 封顶 + prompt 要求"只保存一次"。
   );
@@ -158,17 +160,17 @@ const SUMMARY_PROMPT = `你是一位专业的力量训练教练。请根据用�
 
 请用简洁清晰的中文回复，不需要调用任何保存工具。`;
 
-export function createSummaryStream() {
-  const today = new Date().toISOString().split("T")[0];
+export function createSummaryStream(signal?: AbortSignal) {
   // 周总结不写库：从工具集剔除 save_training_plan。
   const summaryTools = Object.fromEntries(
     Object.entries(agentTools).filter(([name]) => name !== "save_training_plan")
   );
   return agentLoop(
     SUMMARY_PROMPT,
-    `今天是 ${today}，请总结我最近 7 天的训练情况。`,
+    `今天是 ${localToday()}，请总结我最近 7 天的训练情况。`,
     summaryTools,
-    4
+    4,
+    { signal }
   );
 }
 
@@ -190,16 +192,16 @@ const RECOVERY_PROMPT = `你是一位专业的运动科学顾问。请基于用�
 
 请用简洁的中文回复，用小标题分段。`;
 
-export function createRecoveryStream() {
-  const today = new Date().toISOString().split("T")[0];
+export function createRecoveryStream(signal?: AbortSignal) {
   // 恢复分析不写库：从工具集剔除 save_training_plan。
   const recoveryTools = Object.fromEntries(
     Object.entries(agentTools).filter(([name]) => name !== "save_training_plan")
   );
   return agentLoop(
     RECOVERY_PROMPT,
-    `今天是 ${today}，请分析我今天的恢复情况。`,
+    `今天是 ${localToday()}，请分析我今天的恢复情况。`,
     recoveryTools,
-    4
+    4,
+    { signal }
   );
 }

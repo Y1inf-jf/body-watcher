@@ -4,7 +4,7 @@
 // 负荷单位(AU):load = RPE × 时长(分钟) / 6 —— 即"RPE10 练 1 小时 = 100 AU"。
 // 选这个量纲是为了对齐 TrainingPeaks CTL/ATL/TSB 的既有分区经验(+5/-10),
 // 直接用 sRPE 原始量纲(400+/次)会让 form 的经验阈值完全失效。
-import type { SleepSummary, TrainingLogRow } from "./recovery";
+import { localToday, type SleepSummary, type TrainingLogRow } from "./recovery";
 
 // ---------- 每日负荷序列 ----------
 
@@ -14,11 +14,6 @@ export interface DailyLoadPoint {
   rpeUsed: number | null;
   estimated: boolean; // RPE 为估计值(会话 RPE 和动作 RPE 都缺)
   sessions: number;
-}
-
-function localToday(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -46,10 +41,8 @@ export function sessionLoadOf(log: TrainingLogRow): {
   const exercises = log.exercises ?? [];
   const totalSets = exercises.reduce((acc, e) => acc + Number(e.sets ?? 0), 0);
   let duration = Number(log.duration ?? 0);
-  let durationEstimated = false;
   if (duration <= 0 && totalSets > 0) {
-    duration = totalSets * 3;
-    durationEstimated = true;
+    duration = totalSets * 3; // 缺时长按 组数×3分钟 估,只影响负荷量,不影响 estimated 标记
   }
   if (duration <= 0) return { load: 0, rpe: null, estimated: true };
 
@@ -63,7 +56,8 @@ export function sessionLoadOf(log: TrainingLogRow): {
         ? exerciseRpes.reduce((a, b) => a + b, 0) / exerciseRpes.length
         : null;
 
-  const estimated = sessionRpe === null || durationEstimated;
+  // estimated 只标记"RPE 是估的"(与 UI/工具的提示文案一致);缺时长按组数估是另一回事,不影响 RPE 真实性。
+  const estimated = sessionRpe === null;
   const rpe = sessionRpe ?? estimateRpe(totalSets, duration);
   return { load: Math.round((rpe * duration) / 6), rpe, estimated };
 }

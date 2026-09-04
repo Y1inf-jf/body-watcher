@@ -113,6 +113,12 @@ export async function getValidAccessToken(): Promise<string> {
       grant_type: "refresh_token",
     });
     if (!body.access_token) throw new Error("Google 未返回 access_token");
+    // 刷新期间用户可能已断开连接:若本地 refresh_token 已不是当初读到的那个,丢弃刷新结果,
+    // 否则 saveGoogleTokens 的 upsert 会把刚删掉的凭据复活。
+    const current = getGoogleTokens();
+    if (!current || current.refresh_token !== tokens.refresh_token) {
+      throw new GoogleNotConnectedError("连接状态已变更,请重新连接");
+    }
     saveGoogleTokens({
       access_token: body.access_token,
       refresh_token: body.refresh_token ?? tokens.refresh_token,

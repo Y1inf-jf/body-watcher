@@ -61,6 +61,8 @@ export interface SleepSummary {
 
 export interface RecoveryFeatures {
   dataDays: number;
+  dataDate: string | null; // 最新一条设备数据的日期（不一定是今天）
+  staleDays: number | null; // dataDate 距今的天数,0 = 已同步到今天
   hrv: BaselineFeature & { source: "rmssd_deep" | "avg" | null };
   restingHr: BaselineFeature & { deviationBpm: number | null };
   respiratoryRate: BaselineFeature;
@@ -114,8 +116,15 @@ function round1(n: number | null): number | null {
   return n === null ? null : Math.round(n * 10) / 10;
 }
 
-function localToday(): string {
+// 本地日历日期（SQLite 的 date('now') 是 UTC,凌晨会错一天,统一用这里的本地口径）。
+export function localToday(): string {
   const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+export function localDaysAgo(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
@@ -223,15 +232,28 @@ export function computeRecoveryFeatures(rowsAsc: GoogleMetricRow[]): RecoveryFea
       ? `基线累计中（当前 ${baselineDays} 天样本，满 5 天后提供 z-score 对比）`
       : `基线基于最近 ${baselineDays} 天样本`;
 
+  // 陈旧守卫:同步中断时,最后一条数据可能是几天前的,不能冒充"今天"。
+  const dataDate = today?.date ?? null;
+  const staleDays =
+    dataDate !== null
+      ? Math.round(
+          (new Date(`${localToday()}T00:00:00`).getTime() - new Date(`${dataDate}T00:00:00`).getTime()) / 86400000
+        )
+      : null;
+  const staleNote =
+    staleDays !== null && staleDays > 0 ? `；设备数据截至 ${dataDate}（已 ${staleDays} 天未同步）` : "";
+
   return {
     dataDays: rowsAsc.length,
+    dataDate,
+    staleDays,
     hrv,
     restingHr,
     respiratoryRate,
     spo2Avg,
     sleep,
     steps7dTotal: rowsAsc.length ? steps7dTotal : null,
-    note,
+    note: note + staleNote,
   };
 }
 

@@ -6,7 +6,9 @@ export async function GET() {
 
   const esc = (v: unknown) => {
     if (v === null || v === undefined) return "";
-    const s = String(v);
+    let s = String(v);
+    // 防公式注入:以 = + - @ 开头的单元格在 Excel 中会被当公式执行,前缀单引号按文本处理。
+    if (/^[=+\-@]/.test(s)) s = `'${s}`;
     if (s.includes(",") || s.includes('"') || s.includes("\n")) {
       return `"${s.replace(/"/g, '""')}"`;
     }

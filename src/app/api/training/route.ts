@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { insertTrainingLog, queryTrainingHistoryDetailed, getRecentTrainings, queryTrainingCalendar, queryRestDays, getTrainingLog, updateTrainingLog, deleteTrainingLog } from "@/lib/db";
 
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 export async function POST(request: NextRequest) {
   const body = await request.json();
   const { date, duration, rpe, notes, exercises } = body;
 
   if (!date || !exercises?.length) {
     return NextResponse.json({ error: "date and exercises are required" }, { status: 400 });
+  }
+  if (!DATE_RE.test(String(date))) {
+    return NextResponse.json({ error: "date must be YYYY-MM-DD" }, { status: 400 });
   }
 
   const total_volume = exercises.reduce(
@@ -29,6 +34,9 @@ export async function PUT(request: NextRequest) {
 
   if (!id || !date || !exercises?.length) {
     return NextResponse.json({ error: "id, date and exercises are required" }, { status: 400 });
+  }
+  if (!DATE_RE.test(String(date))) {
+    return NextResponse.json({ error: "date must be YYYY-MM-DD" }, { status: 400 });
   }
 
   const total_volume = exercises.reduce(

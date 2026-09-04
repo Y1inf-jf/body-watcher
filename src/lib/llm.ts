@@ -8,11 +8,9 @@ const MODEL = process.env.LLM_MODEL || "qwen3.8-flash";
 /**
  * 基于 Vercel AI SDK v6 的 agent 流。
  *
- * 相比旧的手写 fetch 循环，这里获得：
  * - tool 参数经 Zod 校验后才进入 execute（inputSchema）
- * - 内建重试（maxRetries=2）与超时（timeout）
- * - abortSignal 透传到上游，客户端取消时真正中断上游请求
- * - 上游错误由 SDK 抛出，路由可映射为正确 HTTP 状态（见 /api/agent）
+ * - 内建重试（maxRetries=2）与超时（timeout.totalMs）
+ * - abortSignal 透传上游：客户端取消时真正中断上游请求（后续工具调用不会再执行）
  */
 // 工具集合类型：直接复用 AI SDK 的 ToolSet，工具定义在 agent.ts 用 tool() + Zod 构建。
 export type AgentTools = ToolSet;
@@ -30,20 +28,25 @@ export function getProvider() {
   }).chat(MODEL as Parameters<ReturnType<typeof createOpenAI>["chat"]>[0]);
 }
 
+export interface AgentLoopOptions {
+  signal?: AbortSignal;
+  extraStopConditions?: StopCondition<ToolSet>[];
+}
+
 /**
  * 运行 agent 循环并以纯文本流返回（仅文字 delta，工具调用过程不在流中）。
  * 前端用 `prev + chunk` 拼接即可，无需解析 SSE。
  *
- * @param extraStopConditions 额外停止条件，与 stepCountIs(maxSteps) 合并。
- *   例如 agent 模式传入 hasToolCall("save_training_plan")，保存即停，
- *   防止模型在单次循环内重复写库。
+ * 不使用 toTextStreamResponse：v6 的文本流会把 error 部分静默丢弃，
+ * LLM 报错（401/429/超时）在界面上表现为 0 字节"成功"。这里自己消费 textStream——
+ * 迭代抛错时把错误信息写进流，前端面板直接可见。
  */
 export function agentLoop(
   systemPrompt: string,
   userPrompt: string,
   tools: AgentTools,
   maxSteps: number,
-  extraStopConditions: StopCondition<ToolSet>[] = []
+  opts: AgentLoopOptions = {}
 ): ReadableStream<Uint8Array> {
   const model = getProvider();
 
@@ -53,12 +56,37 @@ export function agentLoop(
     prompt: userPrompt,
     tools,
     // v6 用 stopWhen 取代 maxSteps；默认 stepCountIs(1) 不会循环，必须显式设置。
-    stopWhen: [stepCountIs(maxSteps), ...extraStopConditions],
+    stopWhen: [stepCountIs(maxSteps), ...(opts.extraStopConditions ?? [])],
     maxRetries: 2,
+    abortSignal: opts.signal,
     // 思考型模型带工具循环的单次生成可达 1 分钟以上，60s 会中途截断。
     timeout: { totalMs: 180_000 },
   });
 
-  // toTextStreamResponse 返回 web Response；取其 body 作为 ReadableStream。
-  return result.toTextStreamResponse().body as ReadableStream<Uint8Array>;
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for await (const delta of result.textStream) {
+          if (opts.signal?.aborted) break;
+          controller.enqueue(encoder.encode(delta));
+        }
+      } catch (err) {
+        if (!opts.signal?.aborted) {
+          const msg = err instanceof Error ? err.message : String(err);
+          try {
+            controller.enqueue(encoder.encode(`\n\n[生成失败：${msg}]`));
+          } catch {
+            // 流已关闭，无从报告
+          }
+        }
+      } finally {
+        try {
+          controller.close();
+        } catch {
+          // 已关闭
+        }
+      }
+    },
+  });
 }

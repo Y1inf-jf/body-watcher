@@ -56,11 +56,18 @@ export default function RecoveryScoreCard({
     <Card glowColor={zone?.hex} className="animate-fade-up p-5">
       <CardTitle
         right={
-          score.flags.length > 0 ? (
-            <span className="rounded border border-zone-red/40 bg-zone-red/10 px-1.5 py-0.5 font-mono text-[10px] text-zone-red">
-              ⚠ {score.flags.join(" · ")}
-            </span>
-          ) : null
+          <div className="flex items-center gap-2">
+            {features.staleDays !== null && features.staleDays > 0 && (
+              <span className="rounded border border-zone-amber/40 bg-zone-amber/10 px-1.5 py-0.5 font-mono text-[10px] text-zone-amber">
+                数据截至 {features.dataDate?.slice(5)} · {features.staleDays} 天未同步
+              </span>
+            )}
+            {score.flags.length > 0 && (
+              <span className="rounded border border-zone-red/40 bg-zone-red/10 px-1.5 py-0.5 font-mono text-[10px] text-zone-red">
+                ⚠ {score.flags.join(" · ")}
+              </span>
+            )}
+          </div>
         }
       >
         Recovery · 今日恢复分

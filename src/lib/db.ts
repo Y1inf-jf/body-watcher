@@ -215,7 +215,7 @@ export function queryHealthMetrics(days: number) {
   // 升序（旧→新），与 queryBodyComposition 一致，折线图横轴从左到右为时间正序。
   return db.prepare(`
     SELECT * FROM daily_health
-    WHERE date >= date('now', '-' || ? || ' days')
+    WHERE date >= date('now', 'localtime', '-' || ? || ' days')
     ORDER BY date ASC
   `).all(days);
 }
@@ -273,7 +273,7 @@ export function queryTrainingHistory(days: number) {
     ) as exercises
     FROM training_log tl
     LEFT JOIN training_exercise te ON te.training_log_id = tl.id
-    WHERE tl.date >= date('now', '-' || ? || ' days')
+    WHERE tl.date >= date('now', 'localtime', '-' || ? || ' days')
     GROUP BY tl.id
     ORDER BY tl.date DESC
   `).all(days);
@@ -283,7 +283,7 @@ export function queryTrainingHistoryDetailed(days: number) {
   const db = getDb();
   const logs = db.prepare(`
     SELECT * FROM training_log
-    WHERE date >= date('now', '-' || ? || ' days')
+    WHERE date >= date('now', 'localtime', '-' || ? || ' days')
     ORDER BY date DESC
   `).all(days) as Record<string, unknown>[];
 
@@ -304,11 +304,11 @@ export function queryMuscleRecovery() {
     SELECT
       te.muscle_group,
       MAX(tl.date) as last_trained,
-      CAST(julianday('now') - julianday(MAX(tl.date)) AS INTEGER) as days_since,
+      CAST(julianday('now', 'localtime') - julianday(MAX(tl.date)) AS INTEGER) as days_since,
       SUM(te.sets * te.reps * te.weight) as total_volume_7d
     FROM training_exercise te
     JOIN training_log tl ON tl.id = te.training_log_id
-    WHERE tl.date >= date('now', '-7 days')
+    WHERE tl.date >= date('now', 'localtime', '-7 days')
     GROUP BY te.muscle_group
     ORDER BY days_since ASC
   `).all();
@@ -320,7 +320,7 @@ export function queryBodyComposition(days: number) {
   const db = getDb();
   return db.prepare(`
     SELECT date, weight, body_fat FROM daily_health
-    WHERE weight IS NOT NULL AND date >= date('now', '-' || ? || ' days')
+    WHERE weight IS NOT NULL AND date >= date('now', 'localtime', '-' || ? || ' days')
     ORDER BY date ASC
   `).all(days);
 }
@@ -336,16 +336,18 @@ export function saveTrainingPlan(plan: {
   advice: string;
 }) {
   const db = getDb();
+  // plan_date 是 Zod optional:LLM 不传时键会缺失,better-sqlite3 对缺失命名参数直接抛错,必须补默认值。
+  const { plan_date = null, ...rest } = plan;
   return db.prepare(`
     INSERT INTO training_plan (date, plan_date, analysis_summary, recovery_assessment, exercises, advice)
     VALUES (@date, @plan_date, @analysis_summary, @recovery_assessment, @exercises, @advice)
-  `).run(plan);
+  `).run({ ...rest, plan_date });
 }
 
 export function getTrainingPlans(limit: number = 20) {
   const db = getDb();
   return db.prepare(`
-    SELECT * FROM training_plan ORDER BY created_at DESC LIMIT ?
+    SELECT * FROM training_plan ORDER BY created_at DESC, id DESC LIMIT ?
   `).all(limit);
 }
 
@@ -396,7 +398,7 @@ export function queryExerciseProgress(exerciseName: string, days: number = 90) {
     FROM training_exercise te
     JOIN training_log tl ON tl.id = te.training_log_id
     WHERE te.exercise_name = ?
-      AND tl.date >= date('now', '-' || ? || ' days')
+      AND tl.date >= date('now', 'localtime', '-' || ? || ' days')
       AND te.reps IS NOT NULL
     GROUP BY tl.date
     ORDER BY tl.date ASC
@@ -548,12 +550,12 @@ export function queryTrainingStats() {
   const total = db.prepare("SELECT COUNT(*) as count FROM training_log").get() as { count: number };
   const thisMonth = db.prepare(`
     SELECT COUNT(*) as count FROM training_log
-    WHERE date >= strftime('%Y-%m-01', 'now')
+    WHERE date >= strftime('%Y-%m-01', 'now', 'localtime')
   `).get() as { count: number };
   const totalVolume = db.prepare("SELECT COALESCE(SUM(total_volume), 0) as sum FROM training_log").get() as { sum: number };
   const monthVolume = db.prepare(`
     SELECT COALESCE(SUM(total_volume), 0) as sum FROM training_log
-    WHERE date >= strftime('%Y-%m-01', 'now')
+    WHERE date >= strftime('%Y-%m-01', 'now', 'localtime')
   `).get() as { sum: number };
   const topExercises = db.prepare(`
     SELECT exercise_name, COUNT(*) as count
@@ -719,7 +721,7 @@ export function queryGoogleDailyMetricsRange(days: number) {
   const db = getDb();
   return db.prepare(`
     SELECT * FROM google_daily_metrics
-    WHERE date >= date('now', '-' || ? || ' days')
+    WHERE date >= date('now', 'localtime', '-' || ? || ' days')
     ORDER BY date ASC
   `).all(days);
 }
@@ -758,6 +760,16 @@ export function finishSyncLog(id: number, fields: { finished_at: string; status:
     SET finished_at = @finished_at, status = @status, message = @message, types_synced = @types_synced
     WHERE id = ?
   `).run({ message: null, types_synced: null, ...fields }, id);
+}
+
+// 服务崩溃/重启会让同步日志永远停在 running,启动时统一标记为中断。
+export function markInterruptedSyncLogs() {
+  const db = getDb();
+  db.prepare(`
+    UPDATE google_sync_log
+    SET status = 'error', finished_at = ?, message = '同步中断(服务重启)'
+    WHERE status = 'running'
+  `).run(new Date().toISOString());
 }
 
 export function getLastSyncLog() {
@@ -799,21 +811,23 @@ export function upsertXunjiTraining(
 ): { logId: number; created: boolean } {
   const db = getDb();
   const existing = findTrainingLogByExternalId(data.external_id);
+  // 每行一组(sets=1),容量 = Σ 次数×重量;否则训练统计的 SUM(total_volume) 会漏掉全部镜像数据。
+  const totalVolume = exercises.reduce((acc, e) => acc + (e.reps ?? 0) * (e.weight ?? 0), 0);
   const tx = db.transaction(() => {
     let logId: number;
     const created = !existing;
     if (existing) {
       db.prepare(`
-        UPDATE training_log SET date = @date, duration = @duration, notes = @notes, title = @title
+        UPDATE training_log SET date = @date, duration = @duration, total_volume = @total_volume, notes = @notes, title = @title
         WHERE id = @id
-      `).run({ ...data, id: existing.id });
+      `).run({ ...data, total_volume: totalVolume, id: existing.id });
       logId = existing.id;
       db.prepare("DELETE FROM training_exercise WHERE training_log_id = ?").run(logId);
     } else {
       const r = db.prepare(`
-        INSERT INTO training_log (date, duration, notes, source, external_id, title)
-        VALUES (@date, @duration, @notes, 'xunji', @external_id, @title)
-      `).run(data);
+        INSERT INTO training_log (date, duration, total_volume, notes, source, external_id, title)
+        VALUES (@date, @duration, @total_volume, @notes, 'xunji', @external_id, @title)
+      `).run({ ...data, total_volume: totalVolume });
       logId = Number(r.lastInsertRowid);
     }
     const ins = db.prepare(`

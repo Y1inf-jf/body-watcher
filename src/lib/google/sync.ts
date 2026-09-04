@@ -9,7 +9,7 @@ import {
   upsertGoogleDailyMetrics,
   type GoogleDailyMetricsInput,
 } from "@/lib/db";
-import { getValidAccessToken, listGoogleDataPoints, GoogleNotConnectedError, type GoogleDataPoint } from "./auth";
+import { getValidAccessToken, listGoogleDataPoints, type GoogleDataPoint } from "./auth";
 
 type MetricsPartial = Omit<GoogleDailyMetricsInput, "date">;
 type MetricsMap = Map<string, MetricsPartial>;
@@ -93,13 +93,15 @@ function parseIntoMetrics(map: MetricsMap, rawByDate: Map<string, unknown[]>, po
       const key = st.type?.toLowerCase() as keyof typeof stages;
       if (key in stages) stages[key] += Math.max(0, mins);
     }
+    // 同日多次会话(夜间睡眠 + 小睡):分钟数累加,就枕/起床取最早/最晚。
+    // 每次同步都全量重算最近会话,累加只发生在单次运行内,不会跨同步翻倍。
     const prev = map.get(wake.date);
     mergeMetrics(map, wake.date, {
-      sleep_in_bed_minutes: minutesBetween(s.interval.startTime, s.interval.endTime),
-      sleep_deep_minutes: stages.deep,
-      sleep_rem_minutes: stages.rem,
-      sleep_light_minutes: stages.light,
-      sleep_awake_minutes: stages.awake,
+      sleep_in_bed_minutes: (prev?.sleep_in_bed_minutes ?? 0) + minutesBetween(s.interval.startTime, s.interval.endTime),
+      sleep_deep_minutes: (prev?.sleep_deep_minutes ?? 0) + stages.deep,
+      sleep_rem_minutes: (prev?.sleep_rem_minutes ?? 0) + stages.rem,
+      sleep_light_minutes: (prev?.sleep_light_minutes ?? 0) + stages.light,
+      sleep_awake_minutes: (prev?.sleep_awake_minutes ?? 0) + stages.awake,
       sleep_bedtime: !prev?.sleep_bedtime || bed.hhmm < prev.sleep_bedtime ? bed.hhmm : prev.sleep_bedtime,
       sleep_wakeup: !prev?.sleep_wakeup || wake.hhmm > prev.sleep_wakeup ? wake.hhmm : prev.sleep_wakeup,
     });
@@ -256,7 +258,8 @@ function pushRaw(rawByDate: Map<string, unknown[]>, dataType: string, date: stri
 function computeSinceDate(): string {
   const last = getLastSuccessfulSyncDate();
   const base = last ? new Date(`${last}T00:00:00`) : new Date(Date.now() - 7 * DAY_MS);
-  return new Date(base.getTime() - 3 * DAY_MS).toISOString().slice(0, 10);
+  const d = new Date(base.getTime() - 3 * DAY_MS);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
 async function syncAll(): Promise<SyncResult> {
@@ -304,7 +307,7 @@ async function syncAll(): Promise<SyncResult> {
       try {
         points = await listGoogleDataPoints(token, "steps", { filter: `steps.interval.civil_start_time >= "${since}"` });
       } catch {
-        points = await listGoogleDataPoints(token, "steps");
+        points = await listGoogleDataPoints(token, "steps", { maxPages: 10 });
       }
       parseStepsIntoMetrics(metrics, rawByDate, points);
       types.steps = points.length;
@@ -351,11 +354,7 @@ async function syncAll(): Promise<SyncResult> {
     const fetchedAny = Object.keys(types).length > 0;
     status = errors.length === 0 ? "success" : fetchedAny ? "partial" : "error";
   } catch (err) {
-    if (!(err instanceof GoogleNotConnectedError)) {
-      errors.push((err as Error).message);
-    } else {
-      errors.push((err as Error).message);
-    }
+    errors.push((err as Error).message);
     status = "error";
   }
 
