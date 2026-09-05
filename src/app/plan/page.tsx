@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Send, Square, Plus, Trash2, ClipboardList, HeartPulse } from "lucide-react";
+import { Send, Square, Plus, Trash2, Pin, ClipboardList, HeartPulse } from "lucide-react";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -12,8 +12,17 @@ interface CoachNote {
   id: number;
   content: string;
   source: string;
+  pinned: number;
+  expires_at: string | null;
   created_at: string;
 }
+
+const todayStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+// expires_at 是"有效期至",当天仍有效、次日过期(与注入侧 SQL 的 expires_at > now 口径一致)。
+const isExpired = (date: string | null) => date !== null && date < todayStr();
 
 export default function PlanPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -21,6 +30,7 @@ export default function PlanPage() {
   const [input, setInput] = useState("");
   const [notes, setNotes] = useState<CoachNote[]>([]);
   const [noteInput, setNoteInput] = useState("");
+  const [pinNew, setPinNew] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -83,8 +93,9 @@ export default function PlanPage() {
             return copy;
           });
         }
-        // Agent 可能在对话中存了笔记,完成后刷新一次。
+        // 对话结束后刷新一次笔记;后台记忆整理稍晚落库,延迟几秒再刷一次。
         fetchNotes();
+        setTimeout(fetchNotes, 6000);
       } catch (e) {
         if ((e as Error).name !== "AbortError") {
           patchLast({ content: "[生成失败,请重试]" });
@@ -102,9 +113,19 @@ export default function PlanPage() {
     await fetch("/api/coach-notes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, pinned: pinNew ? 1 : 0 }),
     });
     setNoteInput("");
+    setPinNew(false);
+    fetchNotes();
+  };
+
+  const togglePin = async (n: CoachNote) => {
+    await fetch("/api/coach-notes", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: n.id, pinned: n.pinned ? 0 : 1 }),
+    });
     fetchNotes();
   };
 
@@ -137,9 +158,26 @@ export default function PlanPage() {
               key={n.id}
               className="flex items-center justify-between gap-3 rounded border border-white/5 bg-white/[0.02] px-2.5 py-1.5"
             >
-              <span className="text-sm text-zinc-300">{n.content}</span>
+              <span className="flex min-w-0 items-center gap-2 text-sm text-zinc-300">
+                {n.pinned === 1 && (
+                  <span className="shrink-0 rounded bg-zone-red/10 px-1.5 py-0.5 text-[10px] text-zone-red">硬约束</span>
+                )}
+                <span className={isExpired(n.expires_at) ? "text-zinc-600 line-through" : ""}>{n.content}</span>
+                {n.expires_at && (
+                  <span className="shrink-0 text-[10px] text-zinc-600">
+                    {isExpired(n.expires_at) ? "已过期" : `至 ${n.expires_at}`}
+                  </span>
+                )}
+              </span>
               <span className="flex shrink-0 items-center gap-2">
                 <span className="text-[10px] text-zinc-600">{n.created_at}</span>
+                <button
+                  onClick={() => togglePin(n)}
+                  className={n.pinned ? "text-zone-red" : "text-zinc-600 transition-colors hover:text-zinc-300"}
+                  aria-label={n.pinned ? "取消硬约束" : "置顶为硬约束"}
+                >
+                  <Pin size={13} />
+                </button>
                 <button
                   onClick={() => deleteNote(n.id)}
                   className="text-zinc-600 transition-colors hover:text-zone-red"
@@ -158,6 +196,15 @@ export default function PlanPage() {
               placeholder="手动添加一条,如:膝盖旧伤,避免深蹲"
               className="flex-1 rounded border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none"
             />
+            <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-xs text-zinc-500">
+              <input
+                type="checkbox"
+                checked={pinNew}
+                onChange={(e) => setPinNew(e.target.checked)}
+                className="accent-red-400"
+              />
+              硬约束
+            </label>
             <button
               onClick={addNote}
               disabled={!noteInput.trim()}

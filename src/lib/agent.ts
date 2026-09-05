@@ -1,6 +1,6 @@
-import { tool, type ModelMessage } from "ai";
+import { tool, generateText, type ModelMessage } from "ai";
 import { z } from "zod";
-import { agentLoop, type AgentTools } from "./llm";
+import { agentLoop, getProvider, type AgentTools } from "./llm";
 import {
   queryHealthMetrics,
   queryTrainingHistoryDetailed,
@@ -9,7 +9,9 @@ import {
   queryGoogleDailyMetricsRange,
   saveTrainingPlan,
   getCoachNotes,
-  insertCoachNote,
+  getActiveCoachNotes,
+  applyCoachNoteOps,
+  type CoachNoteOp,
 } from "./db";
 import {
   computeRecoveryFeatures,
@@ -22,17 +24,25 @@ import {
 } from "./recovery";
 import { computeTrainingStatus, computeSleepNeed } from "./training-status";
 
-// 长期笔记注入:每次对话都带上,这是"根据个人情况修正"的落点。
+// 长期笔记注入:每次对话都带上(已过滤过期笔记),这是"根据个人情况修正"的落点。
+// 记忆的写入不在对话热路径做——对话流结束后由 consolidateCoachNotes 异步整理进库。
 function buildCoachSystemPrompt(): string {
-  const notes = getCoachNotes();
+  const notes = getActiveCoachNotes();
   const notesBlock =
     notes.length > 0
-      ? notes.map((n) => `- ${n.content}（${n.created_at}${n.source === "user" ? "，用户手动添加" : ""}）`).join("\n")
+      ? notes
+          .map(
+            (n) =>
+              `- #${n.id}${n.pinned ? " [硬约束]" : ""} ${n.content}（${n.created_at}${n.source === "user" ? "，用户手动添加" : ""}${n.expires_at ? `，有效期至 ${n.expires_at}` : ""}）`
+          )
+          .join("\n")
       : "暂无";
 
   return `你是一位专业的力量训练教练和运动科学顾问，通过多轮对话为用户提供恢复分析和训练计划。
 
-## 用户个人情况（长期笔记，每次对话都生效，务必遵守）
+今天是 ${localToday()}。所有涉及具体日期的字段（如 save_training_plan 的 date / plan_date）一律以今天为基准推算，不要猜测日期。
+
+## 用户个人情况（长期笔记，每次对话都生效，必须遵守；[硬约束] 为绝对限制；笔记之间冲突时，以编号较大（较新）的为准）
 
 ${notesBlock}
 
@@ -43,7 +53,8 @@ ${notesBlock}
 - 不要反复调用同一个工具，调用一次即可
 - 用户对分析或计划提出异议时（如体感不符、想换动作、时间不够），认真对待：必要时重新查询数据，然后直接给出修正后的结论
 - 修改训练计划后必须重新调用 save_training_plan 保存新版本；一次回复里只保存一次，不要连环保存
-- 对话中获知**持久的**个人情况（伤病史、恢复快慢的规律、器材/时间限制、动作偏好、主观感受模式）时，调用 save_coach_note 保存一条简洁笔记（一句话），并简短告知用户已记录；当天性的临时信息（如"今天没时间"）不要保存
+- 对话中获知**持久的**个人情况（伤病史、恢复快慢的规律、器材/时间限制、动作偏好、主观感受模式）时，在回复里自然地确认你会记住（如"了解，后续计划会避开深蹲"）；笔记的保存与修订由系统在对话结束后自动完成，不要声称"已保存/已更新笔记"这类工具性表述；当天性的临时信息（如"今天没时间"）无需确认记忆
+- 你的判断与某条长期笔记矛盾时（如用户刚说伤病已愈、笔记还是旧伤），以用户最新表述为准给出建议，不必纠结旧笔记——系统会自动修订它
 
 ## 核心原则
 
@@ -145,22 +156,99 @@ export const agentTools: AgentTools = {
       return { ok: true };
     },
   }),
-  save_coach_note: tool({
-    description:
-      "把用户的持久个人情况保存到教练笔记（每次后续对话都会自动带上）。只存跨会话有效的信息：伤病史、恢复快慢规律、器材/时间限制、动作偏好、体感模式；当天性临时信息不要存。",
-    inputSchema: z.object({
-      content: z.string().min(2).max(300).describe("笔记内容，一句话"),
-    }),
-    execute: async ({ content }) => {
-      const note = insertCoachNote(content, "agent");
-      return { ok: true, id: note.id, total: getCoachNotes().length };
-    },
-  }),
 };
 
 // 教练对话入口:/plan 页多轮对话,首次可以是恢复分析或排课请求,后续自由追问。
 export function createCoachStream(messages: ModelMessage[], signal?: AbortSignal) {
   return agentLoop(buildCoachSystemPrompt(), messages, agentTools, 6, { signal });
+}
+
+// --- 后台记忆整理:对话流结束后运行,把本轮对话合并进长期笔记 ---
+// Mem0 式管线:一次看到全量笔记 + 整段对话,输出 ADD/UPDATE/DELETE 操作,事务套用。
+// 相比对话中逐条调工具:无延迟开销、去重与矛盾修正是代码保证而非提示词约定。
+
+const CONSOLIDATE_SYSTEM = `你是健身教练系统的长期记忆整理器。根据一段对话，维护用户的教练笔记。只输出一个 JSON 数组，不要输出任何其他文字或代码块标记。
+
+可用操作（pinned / expires_at 可省略）：
+- {"op":"add","content":"一句话笔记","pinned":false,"expires_at":"YYYY-MM-DD"}
+- {"op":"update","id":12,"content":"...","pinned":false,"expires_at":"YYYY-MM-DD"}
+- {"op":"delete","id":12}
+update 里 expires_at 传 null 表示清除到期日。
+
+规则：
+- 只维护跨会话持久的个人情况：伤病史、恢复快慢的规律、器材/时间限制、动作偏好、体感模式
+- 当天性临时信息（如"今天没时间""今天很累"）忽略；计划的具体动作安排、与个人情况无关的闲聊不产生操作
+- 有明确时效的信息（如"未来两周出差只有哑铃"）→ add 或 update 并设置 expires_at，按对话中给出的时间换算具体日期
+- 疾病、忌口、疼痛等硬约束 → pinned 为 true
+- 对话内容与现有笔记矛盾（伤病痊愈、器材或偏好变化）→ update 旧笔记；确实作废的 delete；不要让矛盾笔记并存
+- 与现有笔记重复或高度相似的内容 → 合并为一次 update，不要重复 add
+- content 为一句话，不超过 300 字；宁缺毋滥，最多 8 条操作；没有任何要改的输出 []`;
+
+export async function consolidateCoachNotes(messages: ModelMessage[]): Promise<void> {
+  if (messages.length === 0) return;
+  const notes = getCoachNotes();
+  const notesText =
+    notes.length > 0
+      ? notes
+          .map(
+            (n) =>
+              `- #${n.id}${n.pinned ? " [硬约束]" : ""} ${n.content}${n.expires_at ? `（有效期至 ${n.expires_at}）` : ""}`
+          )
+          .join("\n")
+      : "暂无";
+  const transcript = messages
+    .map(
+      (m) =>
+        `${m.role === "user" ? "用户" : "教练"}：${typeof m.content === "string" ? m.content.slice(0, 2000) : ""}`
+    )
+    .join("\n");
+
+  const { text } = await generateText({
+    model: getProvider(),
+    system: CONSOLIDATE_SYSTEM,
+    prompt: `今天是 ${localToday()}。\n\n现有笔记：\n${notesText}\n\n对话记录：\n${transcript}`,
+    maxRetries: 2,
+  });
+
+  // 容错解析:取文本中最外层的 JSON 数组(LLM 偶尔会带说明文字或代码块标记)。
+  const start = text.indexOf("[");
+  const end = text.lastIndexOf("]");
+  if (start === -1 || end <= start) return;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    console.warn("[coach-notes] consolidation output is not valid JSON, skipped");
+    return;
+  }
+  if (!Array.isArray(parsed)) return;
+
+  const opSchema = z.union([
+    z.object({
+      op: z.literal("add"),
+      content: z.string().min(2).max(300),
+      pinned: z.boolean().optional(),
+      expires_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+    }),
+    z.object({
+      op: z.literal("update"),
+      id: z.number().int().positive(),
+      content: z.string().min(2).max(300).optional(),
+      pinned: z.boolean().optional(),
+      expires_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+    }),
+    z.object({ op: z.literal("delete"), id: z.number().int().positive() }),
+  ]);
+  const result = z.array(opSchema).safeParse(parsed);
+  if (!result.success) {
+    console.warn("[coach-notes] consolidation ops failed schema validation, skipped");
+    return;
+  }
+  const ops = result.data.slice(0, 10) as CoachNoteOp[];
+  if (ops.length > 0) {
+    const r = applyCoachNoteOps(ops);
+    console.log(`[coach-notes] consolidated: +${r.added} ~${r.updated} -${r.deleted}`);
+  }
 }
 
 const SUMMARY_PROMPT = `你是一位专业的力量训练教练。请根据用户本周的训练和健康数据，生成一份周训练总结。
@@ -183,9 +271,7 @@ const SUMMARY_PROMPT = `你是一位专业的力量训练教练。请根据用�
 export function createSummaryStream(signal?: AbortSignal) {
   // 周总结不写库：从工具集剔除保存类工具。
   const summaryTools = Object.fromEntries(
-    Object.entries(agentTools).filter(
-      ([name]) => name !== "save_training_plan" && name !== "save_coach_note"
-    )
+    Object.entries(agentTools).filter(([name]) => name !== "save_training_plan")
   );
   return agentLoop(
     SUMMARY_PROMPT,

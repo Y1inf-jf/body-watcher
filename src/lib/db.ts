@@ -84,6 +84,8 @@ function createTables(db: Database.Database) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       content TEXT NOT NULL,
       source TEXT DEFAULT 'agent',
+      pinned INTEGER DEFAULT 0,
+      expires_at TEXT,
       created_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
 
@@ -179,6 +181,14 @@ function migrate(db: Database.Database) {
   }
   if (!logCols.find((c) => c.name === "title")) {
     db.exec("ALTER TABLE training_log ADD COLUMN title TEXT");
+  }
+  // 教练笔记:pinned=硬约束(不被条数上限挤出);expires_at=时效信息的到期日。
+  const noteCols = db.prepare("PRAGMA table_info(coach_notes)").all() as { name: string }[];
+  if (!noteCols.find((c) => c.name === "pinned")) {
+    db.exec("ALTER TABLE coach_notes ADD COLUMN pinned INTEGER DEFAULT 0");
+  }
+  if (!noteCols.find((c) => c.name === "expires_at")) {
+    db.exec("ALTER TABLE coach_notes ADD COLUMN expires_at TEXT");
   }
 }
 
@@ -359,28 +369,102 @@ export function getTrainingPlans(limit: number = 20) {
 }
 
 // --- Coach notes (教练笔记:跨会话的个人情况记忆) ---
+// pinned=1 是硬约束(疾病/忌口等),排序优先且不被条数上限挤出;
+// expires_at 到期后不再注入提示词(getActiveCoachNotes),UI 仍展示全量以便清理。
 
 export interface CoachNote {
   id: number;
   content: string;
   source: string;
+  pinned: number;
+  expires_at: string | null;
   created_at: string;
 }
 
-export function getCoachNotes(): CoachNote[] {
+// 上限 30 条:笔记是全量注入系统提示词的,无上限会随时间膨胀;超出后未置顶里最旧的先失效。
+export function getCoachNotes(limit: number = 30): CoachNote[] {
   const db = getDb();
-  return db.prepare("SELECT id, content, source, created_at FROM coach_notes ORDER BY id DESC").all() as CoachNote[];
+  return db.prepare(
+    "SELECT id, content, source, pinned, expires_at, created_at FROM coach_notes ORDER BY pinned DESC, id DESC LIMIT ?"
+  ).all(limit) as CoachNote[];
 }
 
-export function insertCoachNote(content: string, source: string): CoachNote {
+// 提示词注入用:过滤已过期笔记。
+export function getActiveCoachNotes(limit: number = 30): CoachNote[] {
   const db = getDb();
-  const r = db.prepare("INSERT INTO coach_notes (content, source) VALUES (?, ?)").run(content, source);
-  return { id: Number(r.lastInsertRowid), content, source, created_at: new Date().toISOString() };
+  return db.prepare(
+    `SELECT id, content, source, pinned, expires_at, created_at FROM coach_notes
+     WHERE expires_at IS NULL OR expires_at > date('now', 'localtime')
+     ORDER BY pinned DESC, id DESC LIMIT ?`
+  ).all(limit) as CoachNote[];
 }
 
-export function deleteCoachNote(id: number) {
+export function insertCoachNote(
+  content: string,
+  source: string,
+  opts: { pinned?: boolean; expires_at?: string | null } = {}
+): CoachNote {
   const db = getDb();
-  db.prepare("DELETE FROM coach_notes WHERE id = ?").run(id);
+  const r = db
+    .prepare("INSERT INTO coach_notes (content, source, pinned, expires_at) VALUES (?, ?, ?, ?)")
+    .run(content, source, opts.pinned ? 1 : 0, opts.expires_at ?? null);
+  return {
+    id: Number(r.lastInsertRowid),
+    content,
+    source,
+    pinned: opts.pinned ? 1 : 0,
+    expires_at: opts.expires_at ?? null,
+    created_at: new Date().toISOString(),
+  };
+}
+
+export function updateCoachNotePinned(id: number, pinned: boolean): void {
+  const db = getDb();
+  db.prepare("UPDATE coach_notes SET pinned = ? WHERE id = ?").run(pinned ? 1 : 0, id);
+}
+
+// 返回是否真的删了行:DELETE API 与整理任务据此判断目标是否存在。
+export function deleteCoachNote(id: number): boolean {
+  const db = getDb();
+  return Number(db.prepare("DELETE FROM coach_notes WHERE id = ?").run(id).changes) > 0;
+}
+
+// 后台记忆整理的原子操作。update 的 expires_at:undefined=保持不变,显式 null=清除;
+// 目标已不存在的操作静默跳过;整个批次在一个事务里套用。
+export type CoachNoteOp =
+  | { op: "add"; content: string; pinned?: boolean; expires_at?: string | null }
+  | { op: "update"; id: number; content?: string; pinned?: boolean; expires_at?: string | null }
+  | { op: "delete"; id: number };
+
+export function applyCoachNoteOps(ops: CoachNoteOp[]): { added: number; updated: number; deleted: number } {
+  const db = getDb();
+  const apply = db.transaction((list: CoachNoteOp[]) => {
+    let added = 0;
+    let updated = 0;
+    let deleted = 0;
+    for (const op of list) {
+      if (op.op === "add") {
+        insertCoachNote(op.content, "agent", { pinned: op.pinned, expires_at: op.expires_at ?? null });
+        added++;
+      } else if (op.op === "update") {
+        const cur = db.prepare("SELECT content, pinned, expires_at FROM coach_notes WHERE id = ?").get(op.id) as
+          | { content: string; pinned: number; expires_at: string | null }
+          | undefined;
+        if (!cur) continue;
+        db.prepare("UPDATE coach_notes SET content = ?, pinned = ?, expires_at = ? WHERE id = ?").run(
+          op.content ?? cur.content,
+          (op.pinned ?? Boolean(cur.pinned)) ? 1 : 0,
+          op.expires_at === undefined ? cur.expires_at : op.expires_at,
+          op.id
+        );
+        updated++;
+      } else if (deleteCoachNote(op.id)) {
+        deleted++;
+      }
+    }
+    return { added, updated, deleted };
+  });
+  return apply(ops);
 }
 
 // --- Recent training for dashboard ---

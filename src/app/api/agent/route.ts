@@ -1,4 +1,4 @@
-import { createCoachStream, createSummaryStream } from "@/lib/agent";
+import { createCoachStream, consolidateCoachNotes, createSummaryStream } from "@/lib/agent";
 import { runSync } from "@/lib/google/sync";
 import { NextRequest, NextResponse } from "next/server";
 import type { ModelMessage } from "ai";
@@ -16,6 +16,37 @@ function sanitizeMessages(raw: unknown): ModelMessage[] | null {
     messages.push({ role, content });
   }
   return messages.slice(-40);
+}
+
+// 包装流:文本原样透传给前端,同时累积助手回复;流正常结束或被取消后触发回调。
+// 用于在对话结束后触发后台记忆整理(不 await,不阻塞响应)。
+function withStreamTap(stream: ReadableStream<Uint8Array>, onDone: (assistantText: string) => void) {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  const finish = () => {
+    try {
+      onDone(text);
+    } catch {
+      // 回调自身的错误不能影响响应
+    }
+  };
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) {
+        controller.close();
+        finish();
+        return;
+      }
+      text += decoder.decode(value, { stream: true });
+      controller.enqueue(value);
+    },
+    async cancel(reason) {
+      finish();
+      return reader.cancel(reason);
+    },
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -37,7 +68,14 @@ export async function POST(req: NextRequest) {
     } else if (history) {
       // 对话首轮先同步一次设备数据,保证分析基于昨晚最新数据;追问轮不再重复同步。
       if (history.length === 1) await runSync().catch(() => {});
-      stream = await createCoachStream(history, req.signal);
+      const coachStream = await createCoachStream(history, req.signal);
+      // 流结束后异步整理长期记忆(去重/修订矛盾/处理时效),失败只记日志不影响对话。
+      stream = withStreamTap(coachStream, (reply) => {
+        if (!reply.trim()) return;
+        consolidateCoachNotes([...history, { role: "assistant", content: reply }]).catch((e) =>
+          console.warn("[coach-notes] consolidation failed:", (e as Error).message)
+        );
+      });
     } else {
       return NextResponse.json({ error: "messages is required" }, { status: 400 });
     }
