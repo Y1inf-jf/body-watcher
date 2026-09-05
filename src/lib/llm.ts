@@ -1,4 +1,4 @@
-import { streamText, stepCountIs, type StopCondition, type ToolSet } from "ai";
+import { streamText, stepCountIs, type ModelMessage, type StopCondition, type ToolSet } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 
 const BASE_URL = process.env.LLM_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
@@ -37,13 +37,15 @@ export interface AgentLoopOptions {
  * 运行 agent 循环并以纯文本流返回（仅文字 delta，工具调用过程不在流中）。
  * 前端用 `prev + chunk` 拼接即可，无需解析 SSE。
  *
+ * messages 传完整对话历史（含之前的问答），实现多轮追问；单轮场景传一条 user 消息即可。
+ *
  * 不使用 toTextStreamResponse：v6 的文本流会把 error 部分静默丢弃，
  * LLM 报错（401/429/超时）在界面上表现为 0 字节"成功"。这里自己消费 textStream——
  * 迭代抛错时把错误信息写进流，前端面板直接可见。
  */
 export function agentLoop(
   systemPrompt: string,
-  userPrompt: string,
+  messages: ModelMessage[],
   tools: AgentTools,
   maxSteps: number,
   opts: AgentLoopOptions = {}
@@ -53,7 +55,7 @@ export function agentLoop(
   const result = streamText({
     model,
     system: systemPrompt,
-    prompt: userPrompt,
+    messages,
     tools,
     // v6 用 stopWhen 取代 maxSteps；默认 stepCountIs(1) 不会循环，必须显式设置。
     stopWhen: [stepCountIs(maxSteps), ...(opts.extraStopConditions ?? [])],

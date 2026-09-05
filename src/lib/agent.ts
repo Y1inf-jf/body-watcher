@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool, type ModelMessage } from "ai";
 import { z } from "zod";
 import { agentLoop, type AgentTools } from "./llm";
 import {
@@ -8,6 +8,8 @@ import {
   queryBodyComposition,
   queryGoogleDailyMetricsRange,
   saveTrainingPlan,
+  getCoachNotes,
+  insertCoachNote,
 } from "./db";
 import {
   computeRecoveryFeatures,
@@ -20,21 +22,33 @@ import {
 } from "./recovery";
 import { computeTrainingStatus, computeSleepNeed } from "./training-status";
 
-export const SYSTEM_PROMPT = `你是一位专业的力量训练教练和运动科学顾问。
+// 长期笔记注入:每次对话都带上,这是"根据个人情况修正"的落点。
+function buildCoachSystemPrompt(): string {
+  const notes = getCoachNotes();
+  const notesBlock =
+    notes.length > 0
+      ? notes.map((n) => `- ${n.content}（${n.created_at}${n.source === "user" ? "，用户手动添加" : ""}）`).join("\n")
+      : "暂无";
 
-你的任务是根据用户的健康数据和训练历史，生成下一次训练计划。
+  return `你是一位专业的力量训练教练和运动科学顾问，通过多轮对话为用户提供恢复分析和训练计划。
+
+## 用户个人情况（长期笔记，每次对话都生效，务必遵守）
+
+${notesBlock}
 
 ## 重要规则
 
 - 工具返回的数据就是用户的实际数据，直接使用即可，不要说"数据不可用"或"无法获取"
 - 如果某个工具返回空数组，说明用户还没有该类型的数据，此时基于已有数据进行分析
 - 不要反复调用同一个工具，调用一次即可
-- 生成计划时必须调用 save_training_plan 工具保存
+- 用户对分析或计划提出异议时（如体感不符、想换动作、时间不够），认真对待：必要时重新查询数据，然后直接给出修正后的结论
+- 修改训练计划后必须重新调用 save_training_plan 保存新版本；一次回复里只保存一次，不要连环保存
+- 对话中获知**持久的**个人情况（伤病史、恢复快慢的规律、器材/时间限制、动作偏好、主观感受模式）时，调用 save_coach_note 保存一条简洁笔记（一句话），并简短告知用户已记录；当天性的临时信息（如"今天没时间"）不要保存
 
 ## 核心原则
 
 1. **渐进超负荷**：训练量应随时间逐步增加，但不盲目加量
-2. **肌群恢复**：力量训练后肌群需要 48-72 小时恢复，间隔不足则跳过该肌群
+2. **肌群恢复**：力量训练后肌群需要 48-72 小时恢复，间隔不足则跳过该肌群（用户笔记另有说明时以笔记为准）
 3. **HRV 信号**：可穿戴设备的 HRV rMSSD z-score ≤ -1，或较基线下降超过 10%，提示身体压力较大，应降低训练强度；基线未就绪时按原始值趋势判断
 4. **恢复分**：query_recovery_status 会返回综合恢复分（0-100，50=自己的正常水平）。红色（<34）当天只安排轻松恢复活动；黄色（34-66）正常训练但不冲 PR；绿色（>=67）可上强度。分数为 null 时按 HRV/静息心率/睡眠分项信号判断，并说明基线累计进度
 5. **训练状态**：query_recovery_status 返回 trainingStatus——ACWR 急慢性比（<0.8 欠训练可加量；0.8-1.3 最优区间维持；1.3-1.5 偏高不再加量；>1.5 急性峰值，只做轻松恢复）、form 体力-疲劳（>+5 新鲜可冲；-10~+5 平衡；<-10 疲劳积累应减量）、周负荷/单调性（单调性>2 说明训练内容太单一，建议变换）、睡眠需求推荐。负荷可能由估计 RPE 得出（estimatedSessions>0 时提醒用户在训记里填 RPE 更准）
@@ -42,17 +56,18 @@ export const SYSTEM_PROMPT = `你是一位专业的力量训练教练和运动�
 7. **睡眠**：在床时长不足 6 小时、睡眠负债超过 45 分钟、或深睡占比低于 15% 时，避免大重量训练
 8. **RPE**：主观疲劳感高（>7）时，选择恢复性训练或休息
 9. **数据优先级**：可穿戴设备数据（query_recovery_status）与手工录入数据并存时，以设备值为准，手工数据作补充
+10. **用户体感优先**：用户对自己身体的当下描述（疼痛、酸胀、精神状态）是第一手信号，与数据结论冲突时明确指出分歧，并以用户体感为准调整建议
 
 ## 工作流程
 
-1. 先调用 query_recovery_status，获取今日恢复分（红/黄/绿）、设备恢复信号（HRV/静息心率基线偏离、睡眠负债）与近 7 天训练负荷
-2. 查询手工健康指标与各肌群恢复状态，确定哪些肌群可以训练
-3. 查询近期训练历史，了解训练模式和进步趋势
-4. 综合分析后生成训练计划，并调用 save_training_plan 保存
+- **恢复分析类请求**：先调用 query_recovery_status 获取恢复分、设备信号与训练负荷，需要时补充肌群恢复查询；输出结构：今日恢复分与色带 → 昨晚睡眠 → 自主神经信号 → 训练负荷状态 → 今日建议（强度定位、练什么、1-2 条注意点）
+- **排课请求**：query_recovery_status → 查询各肌群恢复状态与近期训练历史 → 综合分析后生成训练计划，调用 save_training_plan 保存
 
-## 输出要求
+## 计划保存格式
 
-生成训练计划时请调用 save_training_plan 工具保存，包含：
+save_training_plan 包含：
+- date：生成日期（YYYY-MM-DD）
+- plan_date：计划目标日期（可选）
 - analysis_summary：综合分析（2-3句话）
 - recovery_assessment：恢复状态评估
 - exercises：动作列表 JSON 字符串（每项包含 name、muscle_group、sets、reps、weight）
@@ -60,7 +75,8 @@ export const SYSTEM_PROMPT = `你是一位专业的力量训练教练和运动�
 
 保存动作只做一次；保存完成后，用 3-6 句话总结本次计划的恢复判断与训练重点，作为最终回复。
 
-请使用中文回复。`;
+请使用中文回复，分析类输出用小标题分段。`;
+}
 
 // 工具集：每个工具的入参经 Zod 校验后才进入 execute，
 // 杜绝旧实现里 JSON.parse 后直接喂给 DB 写入的校验缺失问题。
@@ -129,18 +145,22 @@ export const agentTools: AgentTools = {
       return { ok: true };
     },
   }),
+  save_coach_note: tool({
+    description:
+      "把用户的持久个人情况保存到教练笔记（每次后续对话都会自动带上）。只存跨会话有效的信息：伤病史、恢复快慢规律、器材/时间限制、动作偏好、体感模式；当天性临时信息不要存。",
+    inputSchema: z.object({
+      content: z.string().min(2).max(300).describe("笔记内容，一句话"),
+    }),
+    execute: async ({ content }) => {
+      const note = insertCoachNote(content, "agent");
+      return { ok: true, id: note.id, total: getCoachNotes().length };
+    },
+  }),
 };
 
-export function createAgentStream(signal?: AbortSignal) {
-  return agentLoop(
-    SYSTEM_PROMPT,
-    `今天是 ${localToday()}，请根据我的数据生成下一次训练计划。`,
-    agentTools,
-    6,
-    { signal }
-    // 不设 hasToolCall 停止条件：思考型模型（如 qwen3.8）在工具步骤不输出正文，
-    // 保存即停会导致整条流 0 字节；改为靠 maxSteps 封顶 + prompt 要求"只保存一次"。
-  );
+// 教练对话入口:/plan 页多轮对话,首次可以是恢复分析或排课请求,后续自由追问。
+export function createCoachStream(messages: ModelMessage[], signal?: AbortSignal) {
+  return agentLoop(buildCoachSystemPrompt(), messages, agentTools, 6, { signal });
 }
 
 const SUMMARY_PROMPT = `你是一位专业的力量训练教练。请根据用户本周的训练和健康数据，生成一份周训练总结。
@@ -161,46 +181,16 @@ const SUMMARY_PROMPT = `你是一位专业的力量训练教练。请根据用�
 请用简洁清晰的中文回复，不需要调用任何保存工具。`;
 
 export function createSummaryStream(signal?: AbortSignal) {
-  // 周总结不写库：从工具集剔除 save_training_plan。
+  // 周总结不写库：从工具集剔除保存类工具。
   const summaryTools = Object.fromEntries(
-    Object.entries(agentTools).filter(([name]) => name !== "save_training_plan")
+    Object.entries(agentTools).filter(
+      ([name]) => name !== "save_training_plan" && name !== "save_coach_note"
+    )
   );
   return agentLoop(
     SUMMARY_PROMPT,
-    `今天是 ${localToday()}，请总结我最近 7 天的训练情况。`,
+    [{ role: "user", content: `今天是 ${localToday()}，请总结我最近 7 天的训练情况。` }],
     summaryTools,
-    4,
-    { signal }
-  );
-}
-
-const RECOVERY_PROMPT = `你是一位专业的运动科学顾问。请基于用户可穿戴设备的恢复信号和近期训练负荷，生成今日恢复分析。
-
-## 重要规则
-
-- 工具返回的数据就是用户的实际数据，直接使用即可，不要说"数据不可用"
-- 基线数据不足时（返回里明确标注"基线累计中"），如实说明累计进度，不要编造基线对比
-- 这是恢复分析，不是排课：不要生成训练计划明细，不要调用任何保存工具
-
-## 分析结构
-
-1. **今日恢复分**：给出分数与色带（红/黄/绿）及解读，说明分数主要由哪些信号驱动；基线未就绪时说明累计进度
-2. **昨晚睡眠**：在床时长、深睡/REM 占比、睡眠负债解读
-3. **自主神经信号**：HRV 与静息心率相对基线的偏离（基线未就绪则说明累计进度）
-4. **训练负荷状态**：近 7 天训练频次与容量、各肌群恢复情况
-5. **今日建议**：今天适合的训练强度、练什么或休息，以及 1-2 条具体注意点
-
-请用简洁的中文回复，用小标题分段。`;
-
-export function createRecoveryStream(signal?: AbortSignal) {
-  // 恢复分析不写库：从工具集剔除 save_training_plan。
-  const recoveryTools = Object.fromEntries(
-    Object.entries(agentTools).filter(([name]) => name !== "save_training_plan")
-  );
-  return agentLoop(
-    RECOVERY_PROMPT,
-    `今天是 ${localToday()}，请分析我今天的恢复情况。`,
-    recoveryTools,
     4,
     { signal }
   );
