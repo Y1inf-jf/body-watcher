@@ -13,31 +13,33 @@ interface RecoveryPanelProps {
   data: MuscleRecovery[];
 }
 
-function getStatus(daysSince: number): { label: string; className: string } {
-  if (daysSince >= 3)
-    return { label: "可训练", className: "border-zone-green/40 bg-zone-green/10 text-zone-green" };
-  if (daysSince >= 2)
-    return { label: "恢复中", className: "border-zone-amber/40 bg-zone-amber/10 text-zone-amber" };
-  return { label: "需休息", className: "border-zone-red/40 bg-zone-red/10 text-zone-red" };
+function getStatus(daysSince: number): { label: string; dot: string; text: string } {
+  if (daysSince >= 3) return { label: "可训练", dot: "bg-zone-green", text: "text-zone-green" };
+  if (daysSince >= 2) return { label: "恢复中", dot: "bg-zone-amber", text: "text-zone-amber" };
+  return { label: "需休息", dot: "bg-zone-red", text: "text-zone-red" };
 }
 
+// 肌群恢复一行小片:总览页常驻区,一眼看完全身状态。
 export default function RecoveryPanel({ data }: RecoveryPanelProps) {
   return (
     <Card className="animate-fade-up p-4">
-      <CardTitle className="mb-3">Muscle Recovery · 肌群恢复状态</CardTitle>
+      <CardTitle className="mb-3">Muscle Recovery · 肌群恢复</CardTitle>
       {!data.length ? (
         <p className="text-sm text-zinc-600">暂无训练数据</p>
       ) : (
-        <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+        <div className="flex flex-wrap gap-2">
           {data.map((m) => {
             const status = getStatus(m.days_since);
             return (
-              <div key={m.muscle_group} className="rounded-lg border border-white/5 bg-white/[0.02] p-2 text-center">
-                <div className="text-sm font-medium text-zinc-200">{m.muscle_group}</div>
-                <div className={`mt-1.5 inline-block rounded-full border px-2 py-0.5 text-[10px] ${status.className}`}>
-                  {status.label}
-                </div>
-                <div className="mt-1 text-[10px] tabular-nums text-zinc-500">{m.days_since} 天前训练</div>
+              <div
+                key={m.muscle_group}
+                className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-2.5 py-1.5"
+                title={`上次训练 ${m.last_trained}${m.total_volume_7d ? ` · 7天容量 ${m.total_volume_7d}kg` : ""}`}
+              >
+                <span className={`h-1.5 w-1.5 rounded-full ${status.dot}`} />
+                <span className="text-xs font-medium text-zinc-200">{m.muscle_group}</span>
+                <span className={`text-[10px] ${status.text}`}>{status.label}</span>
+                <span className="text-[10px] tabular-nums text-zinc-500">{m.days_since}天前</span>
               </div>
             );
           })}

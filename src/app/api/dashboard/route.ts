@@ -3,7 +3,6 @@ import {
   queryHealthMetrics,
   queryMuscleRecovery,
   getRecentTrainings,
-  queryBodyComposition,
   queryGoogleDailyMetricsRange,
   queryTrainingHistoryDetailed,
 } from "@/lib/db";
@@ -19,7 +18,6 @@ export async function GET() {
   const healthMetrics = queryHealthMetrics(30);
   const muscleRecovery = queryMuscleRecovery();
   const recentTrainings = getRecentTrainings(5);
-  const bodyComposition = queryBodyComposition(30);
 
   // 30 天窗口覆盖 21 天基线池 + 当天，供恢复分计算；35 天训练窗口覆盖 ACWR 慢性池。
   const googleRows = queryGoogleDailyMetricsRange(30) as GoogleMetricRow[];
@@ -28,13 +26,62 @@ export async function GET() {
   const trainingStatus = computeTrainingStatus(queryTrainingHistoryDetailed(35) as TrainingLogRow[]);
   const sleepNeed = computeSleepNeed(recoveryFeatures.sleep, trainingStatus.yesterdayLoad);
 
+  // 趋势图数据:设备指标为主,手动录入补缺(体脂只有手动来源)。日期升序。
+  const byDate = new Map<
+    string,
+    {
+      date: string;
+      hrv: number | null;
+      resting_hr: number | null;
+      sleep_in_bed: number | null;
+      sleep_asleep: number | null;
+      weight: number | null;
+      body_fat: number | null;
+    }
+  >();
+  for (const g of googleRows) {
+    byDate.set(g.date, {
+      date: g.date.slice(5),
+      hrv: g.hrv_rmssd_deep_ms ?? g.hrv_avg_ms ?? null,
+      resting_hr: g.resting_hr ?? null,
+      sleep_in_bed: g.sleep_in_bed_minutes != null ? Math.round((g.sleep_in_bed_minutes / 60) * 10) / 10 : null,
+      sleep_asleep:
+        g.sleep_in_bed_minutes != null
+          ? Math.round(((g.sleep_in_bed_minutes - (g.sleep_awake_minutes ?? 0)) / 60) * 10) / 10
+          : null,
+      weight: g.weight_kg != null ? Number(g.weight_kg) : null,
+      body_fat: null,
+    });
+  }
+  for (const m of healthMetrics as Record<string, unknown>[]) {
+    const date = String(m.date ?? "");
+    if (!date) continue;
+    const row = byDate.get(date) ?? {
+      date: date.slice(5),
+      hrv: null,
+      resting_hr: null,
+      sleep_in_bed: null,
+      sleep_asleep: null,
+      weight: null,
+      body_fat: null,
+    };
+    const num = (v: unknown): number | null => (v == null || v === "" ? null : Number(v));
+    if (row.hrv === null && num(m.hrv) !== null) row.hrv = num(m.hrv);
+    if (row.resting_hr === null && num(m.resting_hr) !== null) row.resting_hr = num(m.resting_hr);
+    if (row.sleep_asleep === null && num(m.sleep_hours) !== null) row.sleep_asleep = num(m.sleep_hours);
+    if (row.weight === null && num(m.weight) !== null) row.weight = num(m.weight);
+    if (row.body_fat === null && num(m.body_fat) !== null) row.body_fat = num(m.body_fat);
+    byDate.set(date, row);
+  }
+  const chartSeries = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+
   return NextResponse.json({
     healthMetrics,
     muscleRecovery,
     recentTrainings,
-    bodyComposition,
     recovery: { features: recoveryFeatures, score: recoveryScore },
     trainingStatus,
     sleepNeed,
+    chartSeries,
   });
 }

@@ -3,6 +3,7 @@
 // (xunji_fetch_log 记录已拉取日期,force 时才重拉)。
 import { gunzipSync } from "node:zlib";
 import {
+  getEmptyFetchedDatestrs,
   getFetchedDatestrs,
   markDatestrFetched,
   upsertXunjiTraining,
@@ -17,6 +18,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const MUSCLE_RULES: [RegExp, string][] = [
   [/平板|卷腹|举腿|抬腿|腹|核心|俄罗斯转体/, "核心"],
   [/蹲|腿|臀|硬拉|弓步|腿弯举|腿屈伸|提踵|史密斯/, "腿"],
+  // 反向飞鸟练三角肌后束,必须排在"飞鸟→胸"之前;后束同理。
+  [/反向飞鸟|反飞鸟|后束/, "肩"],
   [/卧推|卧|胸|飞鸟|夹胸|俯卧撑/, "胸"],
   [/推举|肩|侧平举|面拉|直立划船/, "肩"],
   [/划船|下拉|引体|背|直臂下压/, "背"],
@@ -137,12 +140,14 @@ async function syncAll(opts: { days: number; force: boolean }): Promise<XunjiSyn
   // 上限 366:足够一次全量回填一年;日常同步只传 7。
   const days = Math.min(Math.max(opts.days, 1), 366);
   const fetched = new Set(getFetchedDatestrs());
+  // 当日 0 条 ≠ 确认休息:训练可能是之后才录入/上传的,这类日期每次同步都重新查一次。
+  const emptyDays = new Set(getEmptyFetchedDatestrs());
   const today = new Date();
   const dates: string[] = [];
   for (let i = days - 1; i >= 0; i -= 1) {
     const d = new Date(today.getTime() - i * DAY_MS);
     const datestr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    if (opts.force || !fetched.has(datestr)) dates.push(datestr);
+    if (opts.force || !fetched.has(datestr) || emptyDays.has(datestr)) dates.push(datestr);
   }
 
   for (const datestr of dates) {

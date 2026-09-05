@@ -80,6 +80,13 @@ function createTables(db: Database.Database) {
       created_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
 
+    CREATE TABLE IF NOT EXISTS coach_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      content TEXT NOT NULL,
+      source TEXT DEFAULT 'agent',
+      created_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
     CREATE TABLE IF NOT EXISTS exercise_library (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -349,6 +356,31 @@ export function getTrainingPlans(limit: number = 20) {
   return db.prepare(`
     SELECT * FROM training_plan ORDER BY created_at DESC, id DESC LIMIT ?
   `).all(limit);
+}
+
+// --- Coach notes (教练笔记:跨会话的个人情况记忆) ---
+
+export interface CoachNote {
+  id: number;
+  content: string;
+  source: string;
+  created_at: string;
+}
+
+export function getCoachNotes(): CoachNote[] {
+  const db = getDb();
+  return db.prepare("SELECT id, content, source, created_at FROM coach_notes ORDER BY id DESC").all() as CoachNote[];
+}
+
+export function insertCoachNote(content: string, source: string): CoachNote {
+  const db = getDb();
+  const r = db.prepare("INSERT INTO coach_notes (content, source) VALUES (?, ?)").run(content, source);
+  return { id: Number(r.lastInsertRowid), content, source, created_at: new Date().toISOString() };
+}
+
+export function deleteCoachNote(id: number) {
+  const db = getDb();
+  db.prepare("DELETE FROM coach_notes WHERE id = ?").run(id);
 }
 
 // --- Recent training for dashboard ---
@@ -849,6 +881,13 @@ export function markDatestrFetched(datestr: string, trainsFound: number) {
       trains_found = excluded.trains_found,
       fetched_at = excluded.fetched_at
   `).run(datestr, trainsFound);
+}
+
+// 拉到 0 条的日期:可能只是查询时还没录入/没上传,非强刷同步应保持可重试。
+export function getEmptyFetchedDatestrs(): string[] {
+  const db = getDb();
+  return (db.prepare("SELECT datestr FROM xunji_fetch_log WHERE trains_found = 0").all() as { datestr: string }[])
+    .map((r) => r.datestr);
 }
 
 export function getFetchedDatestrs(): string[] {

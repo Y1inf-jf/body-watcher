@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
+import { Activity, Dumbbell, FileText } from "lucide-react";
 import TrendChart from "@/components/TrendChart";
 import RecoveryPanel from "@/components/RecoveryPanel";
 import RecoveryScoreCard from "@/components/RecoveryScoreCard";
@@ -18,15 +19,32 @@ interface DashboardData {
   healthMetrics: Record<string, unknown>[];
   muscleRecovery: { muscle_group: string; last_trained: string; days_since: number; total_volume_7d: number | null }[];
   recentTrainings: Record<string, unknown>[];
-  bodyComposition: Record<string, unknown>[];
   recovery?: { features: RecoveryFeatures; score: RecoveryScore };
   trainingStatus?: TrainingStatus;
   sleepNeed?: SleepNeedResult | null;
+  chartSeries?: {
+    date: string;
+    hrv: number | null;
+    resting_hr: number | null;
+    sleep_in_bed: number | null;
+    sleep_asleep: number | null;
+    weight: number | null;
+    body_fat: number | null;
+  }[];
 }
+
+// 总览页信息分层:恢复/状态/肌群常驻,细节收进 Tab,打开即见"今天练什么"。
+const TABS = [
+  { key: "trend", label: "趋势", icon: Activity },
+  { key: "training", label: "训练", icon: Dumbbell },
+  { key: "report", label: "报告", icon: FileText },
+] as const;
+type TabKey = (typeof TABS)[number]["key"];
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loadError, setLoadError] = useState(false);
+  const [tab, setTab] = useState<TabKey>("trend");
 
   // 供「重试」按钮调用：重置错误态并重新请求。
   const fetchData = useCallback(() => {
@@ -77,15 +95,11 @@ export default function DashboardPage() {
 
   const isEmpty = data.healthMetrics.length === 0 && data.recentTrainings.length === 0;
 
-  const healthData = data.healthMetrics.map((m) => ({
-    date: (m.date as string).slice(5),
-    hrv: m.hrv as number | null,
-    resting_hr: m.resting_hr as number | null,
-    sleep_hours: m.sleep_hours as number | null,
-  }));
+  // 趋势图:设备指标为主(手动数据在路由层已按日期合并补缺)。
+  const healthData = data.chartSeries ?? [];
 
   return (
-    <div className="space-y-6 max-w-5xl">
+    <div className="space-y-5 max-w-5xl">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold">训练总览</h2>
         <a
@@ -103,8 +117,6 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {!isEmpty && <StatsPanel />}
-
       {isEmpty && (
         <div className="panel p-6 text-center">
           <p className="text-zinc-400 mb-2">欢迎使用 Body Watcher</p>
@@ -120,71 +132,98 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {!isEmpty && (
-      <div className="grid grid-cols-2 gap-4">
-        <TrendChart
-          title="HRV 趋势"
-          data={healthData}
-          series={[{ dataKey: "hrv", color: "#00e08c", name: "HRV (ms)" }]}
-        />
-        <TrendChart
-          title="静息心率"
-          data={healthData}
-          series={[{ dataKey: "resting_hr", color: "#ff5c5c", name: "心率 (bpm)" }]}
-        />
-        <TrendChart
-          title="睡眠时长"
-          data={healthData}
-          series={[{ dataKey: "sleep_hours", color: "#22d3ee", name: "时长 (h)" }]}
-        />
-        <TrendChart
-          title="体重 / 体脂"
-          data={data.bodyComposition.map((m) => ({
-            date: (m.date as string).slice(5),
-            weight: m.weight as number | null,
-            body_fat: m.body_fat as number | null,
-          }))}
-          series={[
-            { dataKey: "weight", color: "#ffb224", name: "体重 (kg)" },
-            { dataKey: "body_fat", color: "#a78bfa", name: "体脂 (%)" },
-          ]}
-        />
-      </div>
-      )}
-
       {!isEmpty && <RecoveryPanel data={data.muscleRecovery} />}
 
       {!isEmpty && (
-      <div className="grid grid-cols-2 gap-4">
-        <TrainingCalendar />
-        <ExerciseProgress />
-      </div>
-      )}
-
-      {!isEmpty && <WeeklySummary />}
-
-      <div>
-        <h3 className="text-sm font-medium text-zinc-400 mb-3">近期训练</h3>
-        {data.recentTrainings.length === 0 ? (
-          <div className="panel p-4 text-center">
-            <p className="text-zinc-600 text-sm">
-              还没有训练记录，
-              <Link href="/input" className="text-accent hover:text-accent/80">去录入</Link>
-            </p>
+        <>
+          <div role="tablist" className="flex w-fit gap-1 rounded-lg border border-white/[0.07] bg-[#0f0f12] p-1">
+            {TABS.map((t) => {
+              const Icon = t.icon;
+              const active = tab === t.key;
+              return (
+                <button
+                  key={t.key}
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setTab(t.key)}
+                  className={`relative flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-xs font-medium transition-colors ${
+                    active ? "bg-white/[0.08] text-zinc-50" : "text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  {active && (
+                    <span className="absolute left-0 top-1/2 h-3.5 w-0.5 -translate-y-1/2 rounded-full bg-accent" />
+                  )}
+                  <Icon size={13} strokeWidth={1.8} />
+                  {t.label}
+                </button>
+              );
+            })}
           </div>
-        ) : (
-          <div className="space-y-2">
-            {data.recentTrainings.map((log) => (
-              <PlanCard
-                key={log.id as number}
-                log={log as unknown as Parameters<typeof PlanCard>[0]["log"]}
-                onDeleted={fetchData}
-                onEdit={(id) => { window.location.href = `/input?edit=${id}`; }}
+
+          {tab === "trend" && (
+            <div key="trend" className="animate-fade-up grid grid-cols-1 gap-4 md:grid-cols-3">
+              <TrendChart
+                title="HRV 趋势"
+                data={healthData}
+                series={[{ dataKey: "hrv", color: "#00e08c", name: "HRV (ms)" }]}
               />
-            ))}
-          </div>
-        )}
-      </div>
+              <TrendChart
+                title="静息心率"
+                data={healthData}
+                series={[{ dataKey: "resting_hr", color: "#ff5c5c", name: "心率 (bpm)" }]}
+              />
+              <TrendChart
+                title="睡眠时长"
+                data={healthData}
+                series={[
+                  { dataKey: "sleep_in_bed", color: "#22d3ee", name: "在床 (h)" },
+                  { dataKey: "sleep_asleep", color: "#a78bfa", name: "睡着 (h)" },
+                ]}
+              />
+            </div>
+          )}
+
+          {tab === "training" && (
+            <div key="training" className="animate-fade-up space-y-5">
+              <StatsPanel />
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <TrainingCalendar />
+                <ExerciseProgress />
+              </div>
+              <div>
+                <h3 className="mb-3 text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">
+                  Recent · 近期训练
+                </h3>
+                {data.recentTrainings.length === 0 ? (
+                  <div className="panel p-4 text-center">
+                    <p className="text-sm text-zinc-600">
+                      还没有训练记录，
+                      <Link href="/input" className="text-accent hover:text-accent/80">去录入</Link>
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {data.recentTrainings.map((log) => (
+                      <PlanCard
+                        key={log.id as number}
+                        log={log as unknown as Parameters<typeof PlanCard>[0]["log"]}
+                        onDeleted={fetchData}
+                        onEdit={(id) => { window.location.href = `/input?edit=${id}`; }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {tab === "report" && (
+            <div key="report" className="animate-fade-up">
+              <WeeklySummary />
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
