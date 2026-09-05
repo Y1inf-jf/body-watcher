@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, ClipboardList, RefreshCw } from "lucide-react";
+import { LayoutDashboard, ClipboardList, RefreshCw, LogOut } from "lucide-react";
 
 const links = [
   { href: "/", label: "总览", icon: LayoutDashboard },
@@ -15,6 +15,13 @@ const links = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  // 登录页只保留品牌区:未登录时导航链接全是死链,点击只会被登录墙弹回
+  const isLogin = pathname === "/login";
+
+  const logout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    window.location.href = "/login";
+  };
 
   return (
     <nav className="w-48 shrink-0 border-r border-white/5 p-4 flex flex-col">
@@ -27,27 +34,38 @@ export default function Sidebar() {
           Body Watcher
         </h1>
       </div>
-      {links.map((link) => {
-        const Icon = link.icon;
-        const active = pathname === link.href;
-        return (
-          <Link
-            key={link.href}
-            href={link.href}
-            className={`relative flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors ${
-              active
-                ? "bg-white/[0.06] text-zinc-50"
-                : "text-zinc-500 hover:bg-white/[0.04] hover:text-zinc-200"
-            }`}
+      {!isLogin &&
+        links.map((link) => {
+          const Icon = link.icon;
+          const active = pathname === link.href;
+          return (
+            <Link
+              key={link.href}
+              href={link.href}
+              className={`relative flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors ${
+                active
+                  ? "bg-white/[0.06] text-zinc-50"
+                  : "text-zinc-500 hover:bg-white/[0.04] hover:text-zinc-200"
+              }`}
+            >
+              {active && (
+                <span className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-accent" />
+              )}
+              <Icon size={15} strokeWidth={1.8} />
+              {link.label}
+            </Link>
+          );
+        })}
+      {!isLogin && (
+        <div className="mt-auto border-t border-white/5 pt-3">
+          <button
+            onClick={logout}
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-zinc-600 transition-colors hover:bg-white/[0.04] hover:text-zone-red"
           >
-            {active && (
-              <span className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-accent" />
-            )}
-            <Icon size={15} strokeWidth={1.8} />
-            {link.label}
-          </Link>
-        );
-      })}
+            <LogOut size={15} strokeWidth={1.8} /> 退出
+          </button>
+        </div>
+      )}
     </nav>
   );
 }
