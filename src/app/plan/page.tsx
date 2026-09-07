@@ -10,7 +10,6 @@ import {
   ClipboardList,
   HeartPulse,
   MessageSquarePlus,
-  ChevronUp,
   Check,
 } from "lucide-react";
 import Markdown from "@/components/Markdown";
@@ -77,12 +76,16 @@ export default function PlanPage() {
       .catch(() => {});
   }, []);
 
-  const fetchSessions = useCallback(() => {
-    fetch("/api/chat")
-      .then((r) => r.json())
+  const fetchSessions = useCallback(async (): Promise<ChatSession[]> => {
+    try {
+      const d = await (await fetch("/api/chat")).json();
       // 0 消息的会话只在"建会话后生成失败"时残留,不展示。
-      .then((d) => setSessions((d.sessions ?? []).filter((s: ChatSession) => s.message_count > 0)))
-      .catch(() => {});
+      const list: ChatSession[] = (d.sessions ?? []).filter((s: ChatSession) => s.message_count > 0);
+      setSessions(list);
+      return list;
+    } catch {
+      return [];
+    }
   }, []);
 
   const openSession = useCallback((id: number) => {
@@ -104,28 +107,24 @@ export default function PlanPage() {
   useEffect(() => {
     fetchNotes();
     // 只拉会话列表,不自动打开任何会话(ChatGPT 式):点历史条目才展开,进页保持干净。
-    fetch("/api/chat")
-      .then((r) => r.json())
-      .then((d) => {
-        const list: ChatSession[] = (d.sessions ?? []).filter((s: ChatSession) => s.message_count > 0);
-        setSessions(list);
-      })
-      .catch(() => {})
-      .finally(() => setHistoryLoaded(true));
-  }, [fetchNotes]);
+    void (async () => {
+      await fetchSessions();
+      setHistoryLoaded(true);
+    })();
+  }, [fetchNotes, fetchSessions]);
 
   // 新消息/流式输出时滚到底部。
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages]);
 
+  const [composing, setComposing] = useState(false);
   const send = useCallback(
     async (text: string) => {
       const content = text.trim();
       if (!content || streaming) return;
       const history = [...messages, { role: "user" as const, content }];
       setMessages([...history, { role: "assistant", content: "" }]);
-      setInput("");
       setStreaming(true);
       abortRef.current = new AbortController();
 
@@ -171,13 +170,12 @@ export default function PlanPage() {
             return copy;
           });
         }
-        // 对话结束后刷新笔记与会话列表;后台记忆整理/落库稍晚,延迟几秒再刷一次。
+        // 对话结束后:先等会话列表刷新,让草稿卡无闪烁交棒给真实会话条目;
+        // 后台记忆整理稍晚落库,笔记延迟几秒再刷一次。
+        await fetchSessions();
+        setComposing(false);
         fetchNotes();
-        fetchSessions();
-        setTimeout(() => {
-          fetchNotes();
-          fetchSessions();
-        }, 6000);
+        setTimeout(fetchNotes, 6000);
       } catch (e) {
         if ((e as Error).name !== "AbortError") {
           patchLast({ content: "[生成失败,请重试]" });
@@ -189,9 +187,6 @@ export default function PlanPage() {
     [messages, streaming, fetchNotes, fetchSessions]
   );
 
-  // 新建对话:不立刻建会话,首条消息发出时由服务端落库,避免空会话堆积。
-  const newChat = () => closeConversation();
-
   const closeConversation = () => {
     if (streaming) return;
     setSessionId(null);
@@ -199,9 +194,17 @@ export default function PlanPage() {
     setMessages([]);
   };
 
-  const switchSession = (id: number) => {
+  // 新建对话草稿:不立刻建会话,首条消息发出时由服务端落库,避免空会话堆积。
+  const newChat = () => {
     if (streaming) return;
-    // 再点当前会话 = 收起,回到"只有列表"的干净视图。
+    closeConversation();
+    setComposing(true);
+  };
+
+  // 列表条目点击 = 就地展开/收起该会话(与草稿卡互斥,同屏只开一个)。
+  const toggleSession = (id: number) => {
+    if (streaming) return;
+    setComposing(false);
     if (id === sessionId) {
       closeConversation();
       return;
@@ -245,7 +248,8 @@ export default function PlanPage() {
     fetchNotes();
   };
 
-  const empty = historyLoaded && messages.length === 0;
+  // 草稿卡展示条件:正在新建,或尚无任何会话(首次引导)。
+  const showComposer = composing || (historyLoaded && sessions.length === 0);
 
   return (
     <div className="flex max-w-4xl flex-col">
@@ -259,48 +263,6 @@ export default function PlanPage() {
           <MessageSquarePlus size={14} /> 新建对话
         </button>
       </div>
-
-      {/* 历史会话列表:回看/切换/删除。即使只有一条也显示,便于删除。 */}
-      {sessions.length >= 1 && (
-        <details className="panel mb-4 p-4" open>
-          <summary className="cursor-pointer text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">
-            Chat History · 历史对话（{sessions.length}）
-          </summary>
-          <div className="mt-3 space-y-1.5">
-            {sessions.map((s) => (
-              <div
-                key={s.id}
-                className={`flex items-center justify-between gap-3 rounded border px-2.5 py-1.5 ${
-                  s.id === sessionId ? "border-accent/40 bg-accent/[0.06]" : "border-white/5 bg-white/[0.02]"
-                }`}
-              >
-                <button
-                  onClick={() => switchSession(s.id)}
-                  disabled={streaming}
-                  title={s.id === sessionId ? "点击收起该对话" : "点击展开该对话"}
-                  className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-sm text-zinc-300 transition-colors hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {s.id === sessionId && <Check size={13} className="shrink-0 text-accent" />}
-                  <span className="truncate">{s.title || "未命名对话"}</span>
-                </button>
-                <span className="flex shrink-0 items-center gap-2">
-                  <span className="text-[10px] text-zinc-600">
-                    {sessionLabel(s)} · {s.message_count} 条
-                  </span>
-                  <button
-                    onClick={() => removeSession(s.id)}
-                    disabled={streaming}
-                    className="text-zinc-600 transition-colors hover:text-zone-red disabled:opacity-40"
-                    aria-label="删除该对话"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </span>
-              </div>
-            ))}
-          </div>
-        </details>
-      )}
 
       {/* 教练笔记:长期记忆层,Agent 对话中也会自动写入 */}
       <details className="panel mb-4 p-4" open={notes.length > 0}>
@@ -376,87 +338,87 @@ export default function PlanPage() {
         </div>
       </details>
 
-      {/* 对话区 */}
-      {empty ? (
-        <div className="panel animate-fade-up p-6 text-center">
-          <p className="mb-2 text-zinc-300">和你的 AI 教练对话</p>
-          <p className="mb-5 text-sm text-zinc-600">
-            它能读取你的恢复分、睡眠、训练状态和全部训练历史;生成后可以继续追问,让它按你的体感修正。
-          </p>
-          <div className="flex justify-center gap-3">
-            <button
-              onClick={() => send("请分析我今天的恢复情况,并给出今天训练的建议。")}
-              disabled={streaming}
-              className="flex items-center gap-2 rounded-lg border border-zone-green/30 bg-zone-green/10 px-4 py-2 text-sm font-medium text-zone-green transition-colors hover:bg-zone-green/20 disabled:opacity-50"
-            >
-              <HeartPulse size={15} /> 恢复分析
-            </button>
-            <button
-              onClick={() => send("请根据我的恢复情况和训练历史,生成下一次训练计划。")}
-              disabled={streaming}
-              className="flex items-center gap-2 rounded-lg bg-accent/90 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-50"
-            >
-              <ClipboardList size={15} /> 生成训练计划
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {sessionId !== null && (
-            <div className="flex justify-end">
+      {/* 会话列表即对话:每条是可展开的卡片,展开后就地显示消息流与追问输入 */}
+      <div className="space-y-2">
+        {/* 无会话时的引导卡:快捷起头 */}
+        {historyLoaded && sessions.length === 0 && (
+          <div className="panel animate-fade-up p-6 text-center">
+            <p className="mb-2 text-zinc-300">和你的 AI 教练对话</p>
+            <p className="mb-5 text-sm text-zinc-600">
+              它能读取你的恢复分、睡眠、训练状态和全部训练历史;生成后可以继续追问,让它按你的体感修正。
+            </p>
+            <div className="flex justify-center gap-3">
               <button
-                onClick={closeConversation}
+                onClick={() => send("请分析我今天的恢复情况,并给出今天训练的建议。")}
                 disabled={streaming}
-                className="flex items-center gap-1 rounded border border-white/10 px-2 py-0.5 text-[11px] text-zinc-500 transition-colors hover:text-zinc-200 disabled:opacity-40"
-                aria-label="收起该对话,返回历史列表"
+                className="flex items-center gap-2 rounded-lg border border-zone-green/30 bg-zone-green/10 px-4 py-2 text-sm font-medium text-zone-green transition-colors hover:bg-zone-green/20 disabled:opacity-50"
               >
-                <ChevronUp size={12} /> 收起对话
+                <HeartPulse size={15} /> 恢复分析
+              </button>
+              <button
+                onClick={() => send("请根据我的恢复情况和训练历史,生成下一次训练计划。")}
+                disabled={streaming}
+                className="flex items-center gap-2 rounded-lg bg-accent/90 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-50"
+              >
+                <ClipboardList size={15} /> 生成训练计划
               </button>
             </div>
-          )}
-          {messages.map((m, i) =>
-            m.role === "user" ? (
-              <div key={i} className="flex justify-end">
-                <div className="max-w-[80%] whitespace-pre-wrap rounded-lg rounded-br-sm border border-accent/25 bg-accent/10 px-3.5 py-2 text-sm text-zinc-100">
-                  {m.content}
-                </div>
-              </div>
-            ) : (
-              <div key={i} className="panel animate-fade-up p-4">
-                <Markdown>{m.content || "…"}</Markdown>
-              </div>
-            )
-          )}
-          <div ref={bottomRef} />
-        </div>
-      )}
-
-      {/* 输入区 */}
-      <div className="mt-4 flex gap-2">
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && send(input)}
-          disabled={streaming}
-          placeholder={empty ? "直接输入,或用上面的快捷按钮开始" : "追问/修正,如:胸没恢复今天别排胸"}
-          className="flex-1 rounded-lg border border-white/10 bg-white/[0.04] px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none disabled:opacity-50"
-        />
-        {streaming ? (
-          <button
-            onClick={() => abortRef.current?.abort()}
-            className="flex items-center gap-1.5 rounded-lg border border-zone-red/40 bg-zone-red/10 px-4 text-sm text-zone-red transition-colors hover:bg-zone-red/20"
-          >
-            <Square size={13} /> 停止
-          </button>
-        ) : (
-          <button
-            onClick={() => send(input)}
-            disabled={!input.trim() || streaming}
-            className="flex items-center gap-1.5 rounded-lg bg-accent/90 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-40"
-          >
-            <Send size={14} /> 发送
-          </button>
+          </div>
         )}
+
+        {/* 新对话草稿卡:首条消息发出即建会话,流结束后由列表真条目接管。
+            草稿展示期没有任何会话展开,故非空的 messages 必为本次新会话,就地流式显示。 */}
+        {showComposer && (
+          <div className="panel p-4">
+            <div className="mb-2 text-xs font-medium text-accent">新对话（未保存,发送后创建）</div>
+            {messages.length > 0 && <div className="mb-3 space-y-3">{renderMessages()}</div>}
+            {renderInput("输入第一条消息,开始新对话")}
+          </div>
+        )}
+
+        {/* 会话卡片 */}
+        {sessions.map((s) => {
+          const expanded = s.id === sessionId && !showComposer;
+          return (
+            <div
+              key={s.id}
+              className={`rounded-lg border p-3 transition-colors ${
+                expanded ? "border-accent/40 bg-accent/[0.04]" : "border-white/5 bg-white/[0.02]"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  onClick={() => toggleSession(s.id)}
+                  disabled={streaming}
+                  title={expanded ? "点击收起该对话" : "就地展开该对话"}
+                  className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-sm text-zinc-200 transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {expanded ? <Check size={13} className="shrink-0 text-accent" /> : null}
+                  <span className="truncate">{s.title || "未命名对话"}</span>
+                </button>
+                <span className="flex shrink-0 items-center gap-2">
+                  <span className="text-[10px] text-zinc-600">
+                    {sessionLabel(s)} · {s.message_count} 条
+                  </span>
+                  <button
+                    onClick={() => removeSession(s.id)}
+                    disabled={streaming}
+                    className="text-zinc-600 transition-colors hover:text-zone-red disabled:opacity-40"
+                    aria-label="删除该对话"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </span>
+              </div>
+              {expanded && (
+                <div className="mt-3 space-y-3 border-t border-white/5 pt-3">
+                  {renderMessages()}
+                  {renderInput("追问/修正,如:胸没恢复今天别排胸")}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* 历史计划:保留执行闭环,默认收起不占版面 */}
@@ -470,6 +432,59 @@ export default function PlanPage() {
       </details>
     </div>
   );
+
+  // —— 渲染片段:消息流 + 输入区(草稿卡与展开会话共用同一套 send/streaming 状态)——
+  function renderMessages() {
+    return (
+      <>
+        {messages.map((m, i) =>
+          m.role === "user" ? (
+            <div key={i} className="flex justify-end">
+              <div className="max-w-[80%] whitespace-pre-wrap rounded-lg rounded-br-sm border border-accent/25 bg-accent/10 px-3.5 py-2 text-sm text-zinc-100">
+                {m.content}
+              </div>
+            </div>
+          ) : (
+            <div key={i} className="panel animate-fade-up p-4">
+              <Markdown>{m.content || "…"}</Markdown>
+            </div>
+          )
+        )}
+        <div ref={bottomRef} />
+      </>
+    );
+  }
+
+  function renderInput(placeholder: string) {
+    return (
+      <div className="flex gap-2">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && send(input)}
+          disabled={streaming}
+          placeholder={placeholder}
+          className="flex-1 rounded-lg border border-white/10 bg-white/[0.04] px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none disabled:opacity-50"
+        />
+        {streaming ? (
+          <button
+            onClick={() => abortRef.current?.abort()}
+            className="flex items-center gap-1.5 rounded-lg border border-zone-red/40 bg-zone-red/10 px-4 text-sm text-zone-red transition-colors hover:bg-zone-red/20"
+          >
+            <Square size={13} /> 停止
+          </button>
+        ) : (
+          <button
+            onClick={() => send(input)}
+            disabled={!input.trim()}
+            className="flex items-center gap-1.5 rounded-lg bg-accent/90 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-40"
+          >
+            <Send size={14} /> 发送
+          </button>
+        )}
+      </div>
+    );
+  }
 }
 
 function PlanHistorySection() {
