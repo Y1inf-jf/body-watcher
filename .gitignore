@@ -49,3 +49,5 @@ next-env.d.ts
 # google health spike token 缓存
 scripts/google-health-spike/.tokens.json
 .zcode/
+# 部署运维档案(含服务器信息),仅本机使用,不入库
+AGENTS.md
