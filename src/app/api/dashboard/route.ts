@@ -7,6 +7,7 @@ import {
   queryTrainingHistoryDetailed,
   getSleepTargets,
   upsertDailyAdvice,
+  getActiveInsights,
 } from "@/lib/db";
 import {
   computeRecoveryFeatures,
@@ -99,6 +100,7 @@ export async function GET() {
     sleepNeed,
     readiness,
     advice,
+    insights: getActiveInsights(),
     chartSeries,
   });
 }

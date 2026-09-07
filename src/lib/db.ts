@@ -91,6 +91,18 @@ function createTables(db: Database.Database) {
     -- 日建议每天一条(dashboard 加载时 upsert);plan 建议一天可多条,按 plan_id 关联。
     CREATE UNIQUE INDEX IF NOT EXISTS ux_advice_daily ON advice_log(date) WHERE source = 'daily';
 
+    CREATE TABLE IF NOT EXISTS insights (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      rule_id TEXT NOT NULL,
+      date TEXT NOT NULL,
+      level TEXT NOT NULL CHECK (level IN ('info', 'warn', 'alert')),
+      title TEXT NOT NULL,
+      detail TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      dismissed_at TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_insights_rule_day ON insights(rule_id, date);
+
     CREATE TABLE IF NOT EXISTS training_template (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -780,6 +792,65 @@ export function queryAdviceHistory(days: number) {
     actual_volume: a.actual_volume,
     actual_rpe: a.actual_rpe,
   }));
+}
+
+// 近 days 天 daily 建议里仍处于 pending(未回填)的条数——洞察规则用来轻推闭环回填。
+export function countStalePendingAdvice(days: number): number {
+  const db = getDb();
+  const row = db
+    .prepare(
+      "SELECT COUNT(*) AS n FROM advice_log WHERE source = 'daily' AND status = 'pending' AND date < date('now','localtime') AND date >= date('now','localtime','-' || ? || ' days')"
+    )
+    .get(days) as { n: number };
+  return row.n;
+}
+
+// --- Insights(主动洞察:sync 后规则引擎产出,总览横幅展示,可关掉) ---
+
+export interface InsightRow {
+  id: number;
+  rule_id: string;
+  date: string;
+  level: "info" | "warn" | "alert";
+  title: string;
+  detail: string;
+  created_at: string;
+  dismissed_at: string | null;
+}
+
+// 同一规则一天最多一条:重算刷新文案,不复活已关掉的横幅。
+export function upsertInsight(
+  ruleId: string,
+  date: string,
+  level: InsightRow["level"],
+  title: string,
+  detail: string
+): void {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO insights (rule_id, date, level, title, detail)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(rule_id, date)
+    DO UPDATE SET level = excluded.level, title = excluded.title, detail = excluded.detail
+  `).run(ruleId, date, level, title, detail);
+}
+
+// 最近 days 天内未被关掉的洞察,最多 limit 条。
+export function getActiveInsights(days: number = 3, limit: number = 5): InsightRow[] {
+  const db = getDb();
+  return db
+    .prepare(`
+      SELECT * FROM insights
+       WHERE dismissed_at IS NULL AND date >= date('now','localtime','-' || ? || ' days')
+       ORDER BY CASE level WHEN 'alert' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, date DESC, id DESC
+       LIMIT ?
+    `)
+    .all(days, limit) as InsightRow[];
+}
+
+export function dismissInsight(id: number): void {
+  const db = getDb();
+  db.prepare("UPDATE insights SET dismissed_at = datetime('now','localtime') WHERE id = ?").run(id);
 }
 
 // --- Coach notes (教练笔记:跨会话的个人情况记忆) ---

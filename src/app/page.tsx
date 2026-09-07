@@ -7,6 +7,7 @@ import TrendChart from "@/components/TrendChart";
 import RecoveryPanel from "@/components/RecoveryPanel";
 import RecoveryScoreCard from "@/components/RecoveryScoreCard";
 import ReadinessCard, { type AdviceView } from "@/components/ReadinessCard";
+import InsightBanner, { type InsightView } from "@/components/InsightBanner";
 import TrainingStatusCard from "@/components/TrainingStatusCard";
 import PlanCard from "@/components/PlanCard";
 import ExerciseProgress from "@/components/ExerciseProgress";
@@ -26,6 +27,7 @@ interface DashboardData {
   sleepNeed?: SleepNeedResult | null;
   readiness?: Readiness;
   advice?: AdviceView;
+  insights?: InsightView[];
   chartSeries?: {
     date: string;
     hrv: number | null;
@@ -113,6 +115,16 @@ export default function DashboardPage() {
           导出数据
         </a>
       </div>
+
+      {data.insights && data.insights.length > 0 && (
+        <InsightBanner
+          insights={data.insights}
+          onDismiss={(id) => {
+            fetch(`/api/insights?id=${id}`, { method: "DELETE" });
+            setData((d) => (d ? { ...d, insights: d.insights?.filter((i) => i.id !== id) } : d));
+          }}
+        />
+      )}
 
       {data.readiness && data.recovery && data.trainingStatus && (
         <ReadinessCard

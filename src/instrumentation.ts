@@ -13,14 +13,21 @@ export async function register() {
   const minutes = Number(process.env.GOOGLE_SYNC_INTERVAL_MINUTES ?? 60);
 
   // Google 未配置时不跑同步,否则每小时留一条无意义的 error 日志。
+  // 返回 promise,供"同步完 → 重算洞察"编排。
   const syncGoogle = () => {
-    if (!isGoogleConfigured()) return;
-    runSync().catch((err) => console.error("[google-sync]", err instanceof Error ? err.message : err));
+    if (!isGoogleConfigured()) return Promise.resolve();
+    return runSync().catch((err) => console.error("[google-sync]", err instanceof Error ? err.message : err));
   };
   const syncXunji = () => {
     import("@/lib/xunji")
       .then((m) => m.runXunjiSync({ days: 7 }))
       .catch((err) => console.error("[xunji-sync]", err instanceof Error ? err.message : err));
+  };
+  // 洞察在数据落库后才有意义;失败只记日志,不影响同步本身。
+  const recomputeInsights = () => {
+    import("@/lib/insights")
+      .then((m) => m.computeInsights())
+      .catch((err) => console.error("[insights]", err instanceof Error ? err.message : err));
   };
 
   // 启动稍等片刻再同步，避免拖慢服务就绪；失败只记日志（详情在 google_sync_log / 状态页）。
@@ -28,15 +35,13 @@ export async function register() {
     import("@/lib/db")
       .then((m) => m.markInterruptedSyncLogs())
       .catch(() => {});
-    syncGoogle();
-    syncXunji();
+    Promise.allSettled([syncGoogle(), syncXunji()]).then(() => recomputeInsights());
   }, 5000).unref();
 
   if (Number.isFinite(minutes) && minutes > 0) {
     setInterval(() => {
-      syncGoogle();
       // 训记也进小时级:fetch_log 幂等限流,长开的服务才能在当天拉到新练的课。
-      syncXunji();
+      Promise.allSettled([syncGoogle(), syncXunji()]).then(() => recomputeInsights());
     }, minutes * 60_000).unref();
   }
 }
