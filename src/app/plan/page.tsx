@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Send, Square, Plus, Trash2, Pin, ClipboardList, HeartPulse } from "lucide-react";
+import Markdown from "@/components/Markdown";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -33,6 +34,7 @@ export default function PlanPage() {
   const [pinNew, setPinNew] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
 
   const fetchNotes = useCallback(() => {
     fetch("/api/coach-notes")
@@ -43,6 +45,21 @@ export default function PlanPage() {
 
   useEffect(() => {
     fetchNotes();
+    // 恢复上次对话:消息已持久化在服务端,刷新/换设备不丢
+    fetch("/api/chat")
+      .then((r) => r.json())
+      .then((d) => {
+        if (Array.isArray(d.messages)) {
+          setMessages(
+            d.messages.map((m: { role: string; content: string }) => ({
+              role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
+              content: m.content,
+            }))
+          );
+        }
+      })
+      .catch(() => {})
+      .finally(() => setHistoryLoaded(true));
   }, [fetchNotes]);
 
   // 新消息/流式输出时滚到底部。
@@ -134,7 +151,7 @@ export default function PlanPage() {
     fetchNotes();
   };
 
-  const empty = messages.length === 0;
+  const empty = historyLoaded && messages.length === 0;
 
   return (
     <div className="flex max-w-4xl flex-col">
@@ -251,9 +268,7 @@ export default function PlanPage() {
               </div>
             ) : (
               <div key={i} className="panel animate-fade-up p-4">
-                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-zinc-300">
-                  {m.content || "…"}
-                </pre>
+                <Markdown>{m.content || "…"}</Markdown>
               </div>
             )
           )}

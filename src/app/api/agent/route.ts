@@ -1,4 +1,5 @@
 import { createCoachStream, consolidateCoachNotes, createSummaryStream } from "@/lib/agent";
+import { insertChatMessage } from "@/lib/db";
 import { runSync } from "@/lib/google/sync";
 import { NextRequest, NextResponse } from "next/server";
 import type { ModelMessage } from "ai";
@@ -69,9 +70,18 @@ export async function POST(req: NextRequest) {
       // 对话首轮先同步一次设备数据,保证分析基于昨晚最新数据;追问轮不再重复同步。
       if (history.length === 1) await runSync().catch(() => {});
       const coachStream = await createCoachStream(history, req.signal);
-      // 流结束后异步整理长期记忆(去重/修订矛盾/处理时效),失败只记日志不影响对话。
+      // 流结束后异步做两件事:持久化本轮问答(前端刷新可恢复),整理长期记忆。
+      // 客户端每轮都带全量历史,这里只落库最后一条 user + 新回复,避免重复。
+      const lastUser = [...history].reverse().find((m) => m.role === "user");
+      const lastUserText = lastUser && typeof lastUser.content === "string" ? lastUser.content : "";
       stream = withStreamTap(coachStream, (reply) => {
         if (!reply.trim()) return;
+        try {
+          if (lastUserText) insertChatMessage("user", lastUserText);
+          insertChatMessage("assistant", reply);
+        } catch (e) {
+          console.warn("[chat] persist failed:", (e as Error).message);
+        }
         consolidateCoachNotes([...history, { role: "assistant", content: reply }]).catch((e) =>
           console.warn("[coach-notes] consolidation failed:", (e as Error).message)
         );

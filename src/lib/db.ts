@@ -89,6 +89,13 @@ function createTables(db: Database.Database) {
       created_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
 
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+      content TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
     CREATE TABLE IF NOT EXISTS exercise_library (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -340,6 +347,29 @@ export function queryBodyComposition(days: number) {
     WHERE weight IS NOT NULL AND date >= date('now', 'localtime', '-' || ? || ' days')
     ORDER BY date ASC
   `).all(days);
+}
+
+// --- Chat history (教练对话持久化) ---
+
+export interface ChatMessageRow {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+}
+
+// 单用户站:不做会话分桶,取最近 limit 条按时间正序返回,前端续聊即无缝接上。
+export function getRecentChatMessages(limit: number = 60): ChatMessageRow[] {
+  const db = getDb();
+  const rows = db
+    .prepare("SELECT id, role, content, created_at FROM (SELECT * FROM chat_messages ORDER BY id DESC LIMIT ?) ORDER BY id ASC")
+    .all(limit) as ChatMessageRow[];
+  return rows;
+}
+
+export function insertChatMessage(role: "user" | "assistant", content: string): void {
+  const db = getDb();
+  db.prepare("INSERT INTO chat_messages (role, content) VALUES (?, ?)").run(role, content);
 }
 
 // --- Training plan ---
