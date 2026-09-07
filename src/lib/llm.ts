@@ -1,9 +1,34 @@
-import { streamText, stepCountIs, type ModelMessage, type StopCondition, type ToolSet } from "ai";
+import { streamText, stepCountIs, generateText, type ModelMessage, type StopCondition, type ToolSet } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
+import { getLlmSettings } from "./db";
 
-const BASE_URL = process.env.LLM_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
-const API_KEY = process.env.LLM_API_KEY || "";
-const MODEL = process.env.LLM_MODEL || "qwen3.8-flash";
+const DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+const DEFAULT_MODEL = "qwen3.8-flash";
+
+type LlmDbVals = { model: string | null; baseUrl: string | null; apiKey: string | null };
+// 结构上接受 process.env 与测试用对象字面量
+type LlmEnvVals = Record<string, string | undefined>;
+
+// 纯合并逻辑(可单测):每项 DB 设置 > .env > 内置默认。
+export function resolveLlmFrom(db: LlmDbVals, env: LlmEnvVals) {
+  const src = (dbVal: string | null, envVal: string | undefined) =>
+    dbVal ? ("db" as const) : envVal ? ("env" as const) : ("default" as const);
+  return {
+    baseUrl: db.baseUrl || env.LLM_BASE_URL || DEFAULT_BASE_URL,
+    apiKey: db.apiKey || env.LLM_API_KEY || "",
+    model: db.model || env.LLM_MODEL || DEFAULT_MODEL,
+    source: {
+      model: src(db.model, env.LLM_MODEL),
+      baseUrl: src(db.baseUrl, env.LLM_BASE_URL),
+      apiKey: db.apiKey ? ("db" as const) : env.LLM_API_KEY ? ("env" as const) : ("none" as const),
+    },
+  };
+}
+
+// 配置解析:每次调用现读 better-sqlite3(微秒级),换 Key/模型无需重启服务。
+export function resolveLlmConfig() {
+  return resolveLlmFrom(getLlmSettings(), process.env);
+}
 
 /**
  * 基于 Vercel AI SDK v6 的 agent 流。
@@ -16,16 +41,33 @@ const MODEL = process.env.LLM_MODEL || "qwen3.8-flash";
 export type AgentTools = ToolSet;
 
 export function getProvider() {
-  if (!API_KEY) {
+  const { baseUrl, apiKey, model } = resolveLlmConfig();
+  if (!apiKey) {
     throw new Error("LLM_API_KEY is not configured");
   }
   // 必须用 .chat() 走 Chat Completions：百炼兼容模式等 OpenAI 兼容服务不实现 Responses API。
   // 非官方模型名（如 qwen3.8-flash）不在 OpenAIChatModelId 联合类型里，需断言。
   return createOpenAI({
-    baseURL: BASE_URL,
-    apiKey: API_KEY,
+    baseURL: baseUrl,
+    apiKey,
     name: "bailian",
-  }).chat(MODEL as Parameters<ReturnType<typeof createOpenAI>["chat"]>[0]);
+  }).chat(model as Parameters<ReturnType<typeof createOpenAI>["chat"]>[0]);
+}
+
+// 连通性测试:用当前生效配置发一条极短生成,"测试"按钮专用。
+// 失败原样带回错误文本(401/超时/模型名错都能一眼看出)。
+export async function testLlmConnection(): Promise<{ ok: boolean; message: string }> {
+  try {
+    const { text } = await generateText({
+      model: getProvider(),
+      prompt: "回复两个字:收到",
+      maxRetries: 0,
+      abortSignal: AbortSignal.timeout(20000),
+    });
+    return { ok: true, message: text.trim().slice(0, 50) || "(空回复)" };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 export interface AgentLoopOptions {

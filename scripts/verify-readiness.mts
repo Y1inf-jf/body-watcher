@@ -186,5 +186,19 @@ function mkScore(score: number | null) {
   check("READY 五档元数据齐全", ["go_hard","normal","downgrade","rest","unknown"].every((l) => !!READY_ZONE_META[l as keyof typeof READY_ZONE_META]));
 }
 
+// ---------- 5. LLM 配置合并优先级 ----------
+console.log("[LLM 配置]");
+import { resolveLlmFrom } from "../src/lib/llm";
+{
+  const none = { model: null, baseUrl: null, apiKey: null };
+  const r1 = resolveLlmFrom(none, {});
+  check("全空 → 内置默认 + Key 未配置", r1.model === "qwen3.8-flash" && r1.source.apiKey === "none" && r1.baseUrl.includes("dashscope"), r1);
+  const r2 = resolveLlmFrom(none, { LLM_MODEL: "deepseek-v3", LLM_API_KEY: "sk-env" });
+  check("DB 空 → 回落 env", r2.model === "deepseek-v3" && r2.apiKey === "sk-env" && r2.source.model === "env", r2);
+  const r3 = resolveLlmFrom({ model: "glm-4.6", baseUrl: null, apiKey: "sk-db" }, { LLM_MODEL: "deepseek-v3", LLM_API_KEY: "sk-env" });
+  check("DB 逐项覆盖 env", r3.model === "glm-4.6" && r3.apiKey === "sk-db" && r3.source.apiKey === "db", r3);
+  check("未设的 baseUrl 各自回落", r3.source.baseUrl === "default" && r3.baseUrl.startsWith("https://dashscope"), r3.source);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

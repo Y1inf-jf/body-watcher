@@ -257,6 +257,39 @@ export function setSleepTargets(targets: SleepTargets): void {
   }
 }
 
+// --- AI(LLM)配置 ---
+// 用户决定:模型/地址/API Key 均可在 /settings 配置(存本表,优先级高于 .env;
+// 清空则回落 env)。Key 属敏感值:任何 GET 接口只回掩码不回明文,见 api/settings。
+export interface LlmSettings {
+  model: string | null;
+  baseUrl: string | null;
+  apiKey: string | null;
+}
+
+const LLM_KEYS: Record<keyof LlmSettings, string> = {
+  model: "llm_model",
+  baseUrl: "llm_base_url",
+  apiKey: "llm_api_key",
+};
+
+export function getLlmSettings(): LlmSettings {
+  const out = {} as LlmSettings;
+  for (const key of Object.keys(LLM_KEYS) as (keyof LlmSettings)[]) {
+    out[key] = getSetting(LLM_KEYS[key]);
+  }
+  return out;
+}
+
+// patch 三态:undefined=该项不变;null 或 ""=清除(回落 .env);非空字符串=写入。
+export function setLlmSettings(patch: Partial<LlmSettings>): void {
+  for (const key of Object.keys(LLM_KEYS) as (keyof LlmSettings)[]) {
+    const v = patch[key];
+    if (v === undefined) continue;
+    if (v === null || v === "") deleteSetting(LLM_KEYS[key]);
+    else setSetting(LLM_KEYS[key], v);
+  }
+}
+
 // --- Health queries ---
 
 export function upsertHealth(data: {

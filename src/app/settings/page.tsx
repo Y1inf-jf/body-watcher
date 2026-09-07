@@ -32,7 +32,33 @@ function fromField(f: FieldState): number | null | undefined {
   return h * 60 + m;
 }
 
+// ---------- AI 配置 ----------
+type LlmSource = "db" | "env" | "default" | "none";
+
+interface LlmInfo {
+  model: string;
+  baseUrl: string;
+  apiKeyMasked: string | null;
+  modelSource: LlmSource;
+  baseUrlSource: LlmSource;
+  apiKeySource: LlmSource;
+}
+
+const SOURCE_LABEL: Record<LlmSource, string> = { db: "设置页", env: ".env", default: "内置默认", none: "未配置" };
+
+function SourceBadge({ source }: { source: LlmSource }) {
+  const cls =
+    source === "db"
+      ? "border-accent/40 bg-accent/10 text-accent"
+      : source === "none"
+        ? "border-zone-red/40 bg-zone-red/10 text-zone-red"
+        : "border-white/10 bg-white/5 text-zinc-500";
+  return <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${cls}`}>{SOURCE_LABEL[source]}</span>;
+}
+
 const INPUT_CLS = "w-14 bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-center tabular-nums";
+const TEXT_INPUT_CLS = "min-w-0 flex-1 bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm";
+const BTN_CLS = "rounded-lg bg-accent/90 px-4 py-1.5 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-50";
 
 export default function SettingsPage() {
   const [fields, setFields] = useState<Record<keyof SleepTargets, FieldState>>({
@@ -44,24 +70,50 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
+  // AI 配置状态:文本字段 + 加载时的初始值(dirty 对比:未动的字段不提交,防止把 env 兜底值意外写进 DB)
+  const [llm, setLlm] = useState<LlmInfo | null>(null);
+  const [modelInput, setModelInput] = useState("");
+  const [baseUrlInput, setBaseUrlInput] = useState("");
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [apiKeyClear, setApiKeyClear] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [llmSaving, setLlmSaving] = useState(false);
+
+  const applyData = useCallback((json: { sleepTargets: SleepTargets; llm: LlmInfo }) => {
+    setFields({
+      minMinutes: toField(json.sleepTargets.minMinutes),
+      targetMinutes: toField(json.sleepTargets.targetMinutes),
+      idealMinutes: toField(json.sleepTargets.idealMinutes),
+    });
+    setLlm(json.llm);
+    setModelInput(json.llm.model);
+    setBaseUrlInput(json.llm.baseUrl);
+    setApiKeyInput("");
+    setApiKeyClear(false);
+    setBanner(null);
+  }, []);
+
+  const load = useCallback(async () => {
+    const res = await fetch("/api/settings");
+    if (!res.ok) throw new Error(String(res.status));
+    applyData((await res.json()) as { sleepTargets: SleepTargets; llm: LlmInfo });
+  }, [applyData]);
+
   useEffect(() => {
-    void (async () => {
+    let cancelled = false;
+    (async () => {
       try {
-        const res = await fetch("/api/settings");
-        if (!res.ok) throw new Error(String(res.status));
-        const json = (await res.json()) as { sleepTargets: SleepTargets };
-        setFields({
-          minMinutes: toField(json.sleepTargets.minMinutes),
-          targetMinutes: toField(json.sleepTargets.targetMinutes),
-          idealMinutes: toField(json.sleepTargets.idealMinutes),
-        });
+        await load();
       } catch {
-        setBanner({ kind: "err", text: "读取设置失败，请刷新重试" });
+        if (!cancelled) setBanner({ kind: "err", text: "读取设置失败，请刷新重试" });
       } finally {
-        setLoaded(true);
+        if (!cancelled) setLoaded(true);
       }
     })();
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [load]);
 
   const onSubmit = useCallback(async (e: FormEvent) => {
     e.preventDefault();
@@ -103,6 +155,54 @@ export default function SettingsPage() {
       setSaving(false);
     }
   }, [fields]);
+
+  const onSaveLlm = useCallback(async (e: FormEvent) => {
+    e.preventDefault();
+    setBanner(null);
+    if (!llm) return;
+    const patch: Record<string, string> = {};
+    if (modelInput.trim() !== llm.model) patch.model = modelInput.trim();
+    if (baseUrlInput.trim() !== llm.baseUrl) patch.baseUrl = baseUrlInput.trim();
+    if (apiKeyClear) patch.apiKey = "";
+    else if (apiKeyInput.trim() !== "") patch.apiKey = apiKeyInput.trim();
+    if (Object.keys(patch).length === 0) {
+      setBanner({ kind: "err", text: "没有需要保存的改动" });
+      return;
+    }
+    setLlmSaving(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ llm: patch }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        setBanner({ kind: "err", text: json.error ?? "保存失败" });
+      } else {
+        setBanner({ kind: "ok", text: "已保存并即时生效（无需重启服务）" });
+        await load();
+      }
+    } catch {
+      setBanner({ kind: "err", text: "网络错误，未保存" });
+    } finally {
+      setLlmSaving(false);
+    }
+  }, [llm, modelInput, baseUrlInput, apiKeyInput, apiKeyClear, load]);
+
+  const onTest = useCallback(async () => {
+    setBanner(null);
+    setTesting(true);
+    try {
+      const res = await fetch("/api/settings/test", { method: "POST" });
+      const json = (await res.json()) as { ok: boolean; message: string };
+      setBanner(json.ok ? { kind: "ok", text: `连接正常，模型回复：${json.message}` } : { kind: "err", text: `连接失败：${json.message}` });
+    } catch {
+      setBanner({ kind: "err", text: "测试请求本身失败了" });
+    } finally {
+      setTesting(false);
+    }
+  }, []);
 
   return (
     <div className="max-w-2xl space-y-4">
@@ -162,16 +262,105 @@ export default function SettingsPage() {
           ))}
 
           <div className="flex items-center gap-3 pt-1">
-            <button
-              type="submit"
-              disabled={!loaded || saving}
-              className="rounded-lg bg-accent/90 px-4 py-1.5 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-50"
-            >
+            <button type="submit" disabled={!loaded || saving} className={BTN_CLS}>
               {saving ? "保存中..." : "保存"}
             </button>
             <span className="text-[11px] text-zinc-600">全部留空 = 不设目标，回到纯历史均值口径</span>
           </div>
         </form>
+      </Card>
+
+      <Card className="p-5">
+        <CardTitle>AI Model · 教练模型</CardTitle>
+        <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+          保存后即时生效，不用重启服务；某项清空保存 = 回落到 .env 兜底。
+          <span className="text-zinc-400"> API Key 只写入不回显</span>（页面与接口都只见掩码），换 Key 直接覆盖输入即可。
+        </p>
+
+        {llm && (
+          <form onSubmit={onSaveLlm} className="mt-4 space-y-4">
+            <div className="flex items-center gap-3">
+              <label className="w-24 shrink-0 text-sm text-zinc-300">
+                模型 <SourceBadge source={llm.modelSource} />
+              </label>
+              <input
+                type="text"
+                className={TEXT_INPUT_CLS}
+                value={modelInput}
+                disabled={!loaded}
+                placeholder={llm.model}
+                onChange={(e) => setModelInput(e.target.value)}
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="w-24 shrink-0 text-sm text-zinc-300">
+                API 地址 <SourceBadge source={llm.baseUrlSource} />
+              </label>
+              <input
+                type="text"
+                className={TEXT_INPUT_CLS}
+                value={baseUrlInput}
+                disabled={!loaded}
+                placeholder={llm.baseUrl}
+                onChange={(e) => setBaseUrlInput(e.target.value)}
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="w-24 shrink-0 text-sm text-zinc-300">
+                API Key <SourceBadge source={llm.apiKeySource} />
+              </label>
+              <input
+                type="password"
+                className={TEXT_INPUT_CLS}
+                value={apiKeyInput}
+                disabled={!loaded || apiKeyClear}
+                autoComplete="off"
+                placeholder={
+                  apiKeyClear
+                    ? "保存后将清除，回落 .env"
+                    : llm.apiKeyMasked
+                      ? `已配置 ${llm.apiKeyMasked} · 留空保持不变`
+                      : "尚未配置，粘贴密钥"
+                }
+                onChange={(e) => {
+                  setApiKeyInput(e.target.value);
+                  if (e.target.value) setApiKeyClear(false);
+                }}
+              />
+              {llm.apiKeySource !== "none" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setApiKeyClear((v) => !v);
+                    setApiKeyInput("");
+                  }}
+                  className={`shrink-0 rounded border px-2 py-1 text-[11px] transition-colors ${
+                    apiKeyClear
+                      ? "border-zone-red/50 bg-zone-red/10 text-zone-red"
+                      : "border-white/10 text-zinc-500 hover:border-zone-red/40 hover:text-zone-red"
+                  }`}
+                >
+                  {apiKeyClear ? "撤销清除" : "清除"}
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3 pt-1">
+              <button type="submit" disabled={!loaded || llmSaving} className={BTN_CLS}>
+                {llmSaving ? "保存中..." : "保存"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void onTest()}
+                disabled={!loaded || testing}
+                className="rounded-lg border border-zinc-700 px-4 py-1.5 text-sm text-zinc-300 transition-colors hover:bg-white/[0.04] disabled:opacity-50"
+              >
+                {testing ? "测试中..." : "测试连接"}
+              </button>
+              <span className="text-[11px] text-zinc-600">测试用已保存的配置</span>
+            </div>
+          </form>
+        )}
       </Card>
     </div>
   );
