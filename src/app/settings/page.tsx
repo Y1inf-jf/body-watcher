@@ -5,9 +5,11 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import type { UserProfile } from "@/lib/db";
 
 const EMPTY_PROFILE: UserProfile = {
-  goal: "",
-  weeklyDays: null,
-  sessionMinutes: null,
+  goal: [],
+  weeklyDaysMin: null,
+  weeklyDaysMax: null,
+  sessionMinMinutes: null,
+  sessionMaxMinutes: null,
   equipment: "",
   schedule: "",
   diet: "",
@@ -321,68 +323,155 @@ export default function SettingsPage() {
         </p>
 
         <form onSubmit={onSaveProfile} className="mt-4 space-y-4">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <label className="w-16 shrink-0 text-sm font-medium text-zinc-200" htmlFor="profile-goal">
-              目标
-            </label>
-            <div className="min-w-0 flex-1 basis-48">
+          {/* 目标:多选 chips + 自定义项(回车添加) */}
+          <div className="flex flex-wrap items-start gap-x-4 gap-y-1">
+            <span className="w-16 shrink-0 pt-1.5 text-sm font-medium text-zinc-200">目标</span>
+            <div className="min-w-0 flex-1 basis-48 space-y-2">
+              <div className="flex flex-wrap gap-1.5">
+                {GOAL_OPTIONS.map((g) => (
+                  <button
+                    key={g}
+                    type="button"
+                    onClick={() =>
+                      setProfile((p) => ({
+                        ...p,
+                        goal: p.goal.includes(g) ? p.goal.filter((x) => x !== g) : [...p.goal, g],
+                      }))
+                    }
+                    className={`rounded-lg border px-3 py-1 text-xs transition-colors ${
+                      profile.goal.includes(g)
+                        ? "border-accent/50 bg-accent/15 text-accent"
+                        : "border-white/10 text-zinc-400 hover:border-white/25 hover:text-zinc-200"
+                    }`}
+                  >
+                    {g}
+                  </button>
+                ))}
+                {profile.goal
+                  .filter((g) => !GOAL_OPTIONS.includes(g))
+                  .map((g) => (
+                    <button
+                      key={g}
+                      type="button"
+                      onClick={() => setProfile((p) => ({ ...p, goal: p.goal.filter((x) => x !== g) }))}
+                      className="rounded-lg border border-accent/50 bg-accent/15 px-3 py-1 text-xs text-accent"
+                      title="点击移除"
+                    >
+                      {g} ✕
+                    </button>
+                  ))}
+              </div>
               <input
                 id="profile-goal"
-                list="goal-options"
+                type="text"
                 className={TEXT_INPUT_CLS}
-                value={profile.goal}
-                disabled={!loaded}
-                placeholder="增肌 / 减脂 / 力量 / 体态 / 健康保持…"
-                onChange={(e) => setProfile((p) => ({ ...p, goal: e.target.value }))}
+                disabled={!loaded || profile.goal.length >= 5}
+                placeholder="自定义目标,回车添加(最多 5 项)"
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  const g = e.currentTarget.value.trim();
+                  if (g && !profile.goal.includes(g) && profile.goal.length < 5) {
+                    setProfile((p) => ({ ...p, goal: [...p.goal, g] }));
+                    e.currentTarget.value = "";
+                  }
+                }}
               />
-              <datalist id="goal-options">
-                {GOAL_OPTIONS.map((g) => (
-                  <option key={g} value={g} />
-                ))}
-              </datalist>
             </div>
           </div>
 
+          {/* 每周可练:范围 min–max,右侧留空 = 固定值 */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <label className="w-16 shrink-0 text-sm font-medium text-zinc-200" htmlFor="profile-days">
+            <label className="w-16 shrink-0 text-sm font-medium text-zinc-200" htmlFor="profile-days-min">
               每周可练
             </label>
-            <input
-              id="profile-days"
-              type="number"
-              min={1}
-              max={7}
-              inputMode="numeric"
-              placeholder="天数"
-              className={INPUT_CLS}
-              value={profile.weeklyDays ?? ""}
-              disabled={!loaded}
-              onChange={(e) =>
-                setProfile((p) => ({ ...p, weeklyDays: e.target.value === "" ? null : Number(e.target.value) }))
-              }
-            />
-            <div className="min-w-0 flex-1 basis-48 text-[11px] text-zinc-500">一周打算/能练几次(1-7)</div>
+            <div className="flex items-center gap-1.5">
+              <input
+                id="profile-days-min"
+                type="number"
+                min={1}
+                max={7}
+                inputMode="numeric"
+                placeholder="3"
+                className={INPUT_CLS}
+                value={profile.weeklyDaysMin ?? ""}
+                disabled={!loaded}
+                onChange={(e) =>
+                  setProfile((p) => ({
+                    ...p,
+                    weeklyDaysMin: e.target.value === "" ? null : Number(e.target.value),
+                  }))
+                }
+              />
+              <span className="text-xs text-zinc-500">–</span>
+              <input
+                type="number"
+                min={1}
+                max={7}
+                inputMode="numeric"
+                placeholder="4"
+                className={INPUT_CLS}
+                value={profile.weeklyDaysMax ?? ""}
+                disabled={!loaded}
+                onChange={(e) =>
+                  setProfile((p) => ({
+                    ...p,
+                    weeklyDaysMax: e.target.value === "" ? null : Number(e.target.value),
+                  }))
+                }
+              />
+              <span className="text-xs text-zinc-500">天</span>
+            </div>
+            <div className="min-w-0 flex-1 basis-48 text-[11px] text-zinc-500">
+              一周打算/能练几次,支持范围;右侧留空 = 就是固定值
+            </div>
           </div>
 
+          {/* 单次时长:范围 min–max */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <label className="w-16 shrink-0 text-sm font-medium text-zinc-200" htmlFor="profile-minutes">
+            <label className="w-16 shrink-0 text-sm font-medium text-zinc-200" htmlFor="profile-minutes-min">
               单次时长
             </label>
-            <input
-              id="profile-minutes"
-              type="number"
-              min={10}
-              max={300}
-              inputMode="numeric"
-              placeholder="分钟"
-              className={INPUT_CLS}
-              value={profile.sessionMinutes ?? ""}
-              disabled={!loaded}
-              onChange={(e) =>
-                setProfile((p) => ({ ...p, sessionMinutes: e.target.value === "" ? null : Number(e.target.value) }))
-              }
-            />
-            <div className="min-w-0 flex-1 basis-48 text-[11px] text-zinc-500">每次训练可用时间(10-300 分钟)</div>
+            <div className="flex items-center gap-1.5">
+              <input
+                id="profile-minutes-min"
+                type="number"
+                min={10}
+                max={300}
+                inputMode="numeric"
+                placeholder="60"
+                className={INPUT_CLS}
+                value={profile.sessionMinMinutes ?? ""}
+                disabled={!loaded}
+                onChange={(e) =>
+                  setProfile((p) => ({
+                    ...p,
+                    sessionMinMinutes: e.target.value === "" ? null : Number(e.target.value),
+                  }))
+                }
+              />
+              <span className="text-xs text-zinc-500">–</span>
+              <input
+                type="number"
+                min={10}
+                max={300}
+                inputMode="numeric"
+                placeholder="90"
+                className={INPUT_CLS}
+                value={profile.sessionMaxMinutes ?? ""}
+                disabled={!loaded}
+                onChange={(e) =>
+                  setProfile((p) => ({
+                    ...p,
+                    sessionMaxMinutes: e.target.value === "" ? null : Number(e.target.value),
+                  }))
+                }
+              />
+              <span className="text-xs text-zinc-500">分钟</span>
+            </div>
+            <div className="min-w-0 flex-1 basis-48 text-[11px] text-zinc-500">
+              每次可用时间(10-300 分钟),右侧留空 = 固定值
+            </div>
           </div>
 
           {(

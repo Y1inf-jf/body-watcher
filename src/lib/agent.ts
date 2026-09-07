@@ -48,9 +48,21 @@ function buildCoachSystemPrompt(): string {
   // 结构化画像:设置页维护的目标与现实约束,排课的量与动作选择以此为硬边界。
   const p = getUserProfile();
   const profileLines: string[] = [];
-  if (p.goal.trim()) profileLines.push(`- 训练目标：${p.goal.trim()}`);
-  if (p.weeklyDays) profileLines.push(`- 每周可训练：${p.weeklyDays} 天`);
-  if (p.sessionMinutes) profileLines.push(`- 单次可用时长：约 ${p.sessionMinutes} 分钟`);
+  if (p.goal.length > 0) profileLines.push(`- 训练目标：${p.goal.join("、")}`);
+  if (p.weeklyDaysMin !== null) {
+    const days =
+      p.weeklyDaysMax !== null && p.weeklyDaysMax !== p.weeklyDaysMin
+        ? `${p.weeklyDaysMin}-${p.weeklyDaysMax}`
+        : String(p.weeklyDaysMin);
+    profileLines.push(`- 每周可训练：${days} 天`);
+  }
+  if (p.sessionMinMinutes !== null) {
+    const minutes =
+      p.sessionMaxMinutes !== null && p.sessionMaxMinutes !== p.sessionMinMinutes
+        ? `${p.sessionMinMinutes}-${p.sessionMaxMinutes}`
+        : String(p.sessionMinMinutes);
+    profileLines.push(`- 单次可用时长：约 ${minutes} 分钟`);
+  }
   if (p.equipment.trim()) profileLines.push(`- 器材/场地：${p.equipment.trim()}`);
   if (p.schedule.trim()) profileLines.push(`- 作息/时间窗：${p.schedule.trim()}`);
   if (p.diet.trim()) profileLines.push(`- 饮食约束：${p.diet.trim()}`);

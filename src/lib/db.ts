@@ -345,12 +345,14 @@ export function setSleepTargets(targets: SleepTargets): void {
 // --- User profile(用户画像档案:目标/可训频率/时长/器材/作息/饮食,注入教练提示词) ---
 
 export interface UserProfile {
-  /** 训练目标:增肌/减脂/力量/健康保持/体态,空=未设 */
-  goal: string;
-  /** 每周可训练天数,空=未设 */
-  weeklyDays: number | null;
-  /** 单次训练可用时长(分钟),空=未设 */
-  sessionMinutes: number | null;
+  /** 训练目标,可多选(如 增肌/减脂/力量),空数组=未设 */
+  goal: string[];
+  /** 每周可训练天数范围;max 为 null = 固定 min 次。全 null=未设 */
+  weeklyDaysMin: number | null;
+  weeklyDaysMax: number | null;
+  /** 单次训练可用时长(分钟)范围;max 为 null = 固定 min 分钟。全 null=未设 */
+  sessionMinMinutes: number | null;
+  sessionMaxMinutes: number | null;
   /** 器材/场地限制,空=未设 */
   equipment: string;
   /** 作息/时间窗(如工作日午休、夜班),空=未设 */
@@ -362,9 +364,11 @@ export interface UserProfile {
 export const USER_PROFILE_KEY = "user_profile";
 
 const EMPTY_PROFILE: UserProfile = {
-  goal: "",
-  weeklyDays: null,
-  sessionMinutes: null,
+  goal: [],
+  weeklyDaysMin: null,
+  weeklyDaysMax: null,
+  sessionMinMinutes: null,
+  sessionMaxMinutes: null,
   equipment: "",
   schedule: "",
   diet: "",
@@ -374,8 +378,22 @@ export function getUserProfile(): UserProfile {
   const raw = getSetting(USER_PROFILE_KEY);
   if (!raw) return { ...EMPTY_PROFILE };
   try {
-    const parsed = JSON.parse(raw) as Partial<UserProfile>;
-    return { ...EMPTY_PROFILE, ...parsed };
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const profile: UserProfile = { ...EMPTY_PROFILE, ...parsed } as UserProfile;
+    // 旧版单值字段兼容:goal 字符串→数组;weeklyDays/sessionMinutes→min=max。
+    if (typeof parsed.goal === "string") profile.goal = parsed.goal.trim() ? [parsed.goal.trim()] : [];
+    const oldDays = parsed.weeklyDays;
+    // 注意展开 EMPTY_PROFILE 后缺键是 null 而非 undefined,别用 undefined 判断。
+    if (profile.weeklyDaysMin === null && typeof oldDays === "number") {
+      profile.weeklyDaysMin = oldDays;
+      profile.weeklyDaysMax = oldDays;
+    }
+    const oldMinutes = parsed.sessionMinutes;
+    if (profile.sessionMinMinutes === null && typeof oldMinutes === "number") {
+      profile.sessionMinMinutes = oldMinutes;
+      profile.sessionMaxMinutes = oldMinutes;
+    }
+    return profile;
   } catch {
     return { ...EMPTY_PROFILE };
   }
@@ -383,16 +401,18 @@ export function getUserProfile(): UserProfile {
 
 export function setUserProfile(profile: UserProfile): void {
   // 只存有效字段;全空则删除设置记录,避免留一坨空 JSON。
-  const meaningful = { ...EMPTY_PROFILE, ...profile };
+  const p = { ...EMPTY_PROFILE, ...profile };
   const hasAny =
-    meaningful.goal.trim() !== "" ||
-    meaningful.weeklyDays !== null ||
-    meaningful.sessionMinutes !== null ||
-    meaningful.equipment.trim() !== "" ||
-    meaningful.schedule.trim() !== "" ||
-    meaningful.diet.trim() !== "";
+    p.goal.length > 0 ||
+    p.weeklyDaysMin !== null ||
+    p.weeklyDaysMax !== null ||
+    p.sessionMinMinutes !== null ||
+    p.sessionMaxMinutes !== null ||
+    p.equipment.trim() !== "" ||
+    p.schedule.trim() !== "" ||
+    p.diet.trim() !== "";
   if (!hasAny) deleteSetting(USER_PROFILE_KEY);
-  else setSetting(USER_PROFILE_KEY, JSON.stringify(meaningful));
+  else setSetting(USER_PROFILE_KEY, JSON.stringify(p));
 }
 
 // --- AI(LLM)配置 ---

@@ -102,6 +102,40 @@ function parseProfile(raw: unknown): UserProfile | string {
   if (typeof raw !== "object" || raw === null) return "profile 需为对象";
   const v = raw as Record<string, unknown>;
 
+  // goal:字符串数组(多选),每项 trim 后 1-30 字;空数组/缺省 = 未设。
+  let goal: string[] = [];
+  if (v.goal !== undefined && v.goal !== null) {
+    if (!Array.isArray(v.goal)) return "goal 需为字符串数组";
+    goal = v.goal
+      .map((g) => (typeof g === "string" ? g.trim() : ""))
+      .filter((g) => g !== "");
+    if (goal.some((g) => g.length > 30)) return "每个目标不超过 30 字";
+    if (goal.length > 5) return "目标最多 5 项";
+  }
+
+  // 范围字段:min 必须整数, max 可空(=固定值);都给时 max ≥ min。
+  const range = (
+    minRaw: unknown,
+    maxRaw: unknown,
+    lo: number,
+    hi: number,
+    unit: string
+  ): { min: number | null; max: number | null } | string => {
+    const min = minRaw === undefined || minRaw === null || minRaw === "" ? null : Number(minRaw);
+    const max = maxRaw === undefined || maxRaw === null || maxRaw === "" ? null : Number(maxRaw);
+    const ok = (n: number) => Number.isInteger(n) && n >= lo && n <= hi;
+    if (min === null && max !== null) return `${unit}:只填了上限,请补下限(或两个都留空)`;
+    if (min !== null && !ok(min)) return `${unit}下限需为 ${lo}-${hi} 的整数`;
+    if (max !== null && (!ok(max) || (min !== null && max < min))) {
+      return `${unit}上限需为 ${lo}-${hi} 的整数且不小于下限`;
+    }
+    return { min, max };
+  };
+  const days = range(v.weeklyDaysMin, v.weeklyDaysMax, 1, 7, "每周可练天数");
+  if (typeof days === "string") return days;
+  const minutes = range(v.sessionMinMinutes, v.sessionMaxMinutes, 10, 300, "单次时长");
+  if (typeof minutes === "string") return minutes;
+
   // 返回 undefined 表示该字段非法(类型错或超长);空/缺省 = 未设,规范为空串。
   const text = (name: string, max: number): string | undefined => {
     const x = v[name];
@@ -110,28 +144,23 @@ function parseProfile(raw: unknown): UserProfile | string {
     const s = x.trim();
     return s === "" || s.length <= max ? s : undefined;
   };
-  const goal = text("goal", 30);
   const equipment = text("equipment", 200);
   const schedule = text("schedule", 200);
   const diet = text("diet", 200);
-  if (goal === undefined || equipment === undefined || schedule === undefined || diet === undefined) {
-    return "profile 文本字段超长或类型错误(goal ≤30 字,其余 ≤200 字)";
+  if (equipment === undefined || schedule === undefined || diet === undefined) {
+    return "profile 文本字段超长或类型错误(不超过 200 字)";
   }
 
-  const intOr = (name: string, lo: number, hi: number): number | null | undefined => {
-    const x = v[name];
-    if (x === undefined || x === null || x === "") return null;
-    const n = Number(x);
-    if (!Number.isInteger(n) || n < lo || n > hi) return undefined;
-    return n;
+  return {
+    goal,
+    weeklyDaysMin: days.min,
+    weeklyDaysMax: days.max,
+    sessionMinMinutes: minutes.min,
+    sessionMaxMinutes: minutes.max,
+    equipment,
+    schedule,
+    diet,
   };
-  const weeklyDays = intOr("weeklyDays", 1, 7);
-  const sessionMinutes = intOr("sessionMinutes", 10, 300);
-  if (weeklyDays === undefined || sessionMinutes === undefined) {
-    return "每周可练天数需为 1-7 的整数,单次时长需为 10-300 的整数(可留空)";
-  }
-
-  return { goal, weeklyDays, sessionMinutes, equipment, schedule, diet };
 }
 
 export async function POST(request: NextRequest) {
