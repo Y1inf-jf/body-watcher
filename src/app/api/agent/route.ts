@@ -1,5 +1,11 @@
-import { createCoachStream, consolidateCoachNotes, createSummaryStream } from "@/lib/agent";
-import { createChatSession, insertChatMessage } from "@/lib/db";
+import {
+  createCoachStream,
+  consolidateCoachNotes,
+  createSummaryStream,
+  createMonthlyStream,
+} from "@/lib/agent";
+import { createChatSession, insertChatMessage, savePeriodReport } from "@/lib/db";
+import { localToday, localDaysAgo } from "@/lib/recovery";
 import { runSync } from "@/lib/google/sync";
 import { NextRequest, NextResponse } from "next/server";
 import type { ModelMessage } from "ai";
@@ -71,6 +77,17 @@ export async function POST(req: NextRequest) {
   try {
     if (mode === "summary") {
       stream = await createSummaryStream(req.signal);
+    } else if (mode === "monthly") {
+      // 阶段复盘:流式输出,正常结束(或取消)后把全文落库,报告 Tab 可回看。
+      const monthly = await createMonthlyStream(req.signal);
+      stream = withStreamTap(monthly, (text) => {
+        if (!text.trim()) return;
+        try {
+          savePeriodReport("monthly", localDaysAgo(29), localToday(), text);
+        } catch (e) {
+          console.warn("[monthly-report] persist failed:", (e as Error).message);
+        }
+      });
     } else if (history) {
       // 对话首轮先同步一次设备数据,保证分析基于昨晚最新数据;追问轮不再重复同步。
       if (history.length === 1) await runSync().catch(() => {});

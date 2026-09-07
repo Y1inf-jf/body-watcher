@@ -8,6 +8,7 @@ import {
   getSleepTargets,
   upsertDailyAdvice,
   getActiveInsights,
+  upsertRecoverySnapshot,
 } from "@/lib/db";
 import {
   computeRecoveryFeatures,
@@ -41,6 +42,18 @@ export async function GET() {
   });
   // 建议闭环:日建议落档(同日重算只刷新文案,不动已回填的采纳状态/体感)。
   const advice = upsertDailyAdvice(localToday(), readiness.headline, readiness.detail);
+  // 阶段复盘:每日恢复快照存档(同日重算刷新),供月报看趋势。
+  upsertRecoverySnapshot({
+    date: localToday(),
+    score: recoveryScore.score,
+    zone: recoveryScore.zone,
+    hrv_z: recoveryFeatures.hrv.zScore,
+    resting_hr_dev: recoveryFeatures.restingHr.deviationBpm,
+    sleep_debt_minutes: recoveryFeatures.sleep.debtMinutes,
+    load_7d: trainingStatus.weekly.load7d,
+    acwr: trainingStatus.acwr.value,
+    form: trainingStatus.form.value,
+  });
 
   // 趋势图数据:设备指标为主,手动录入补缺(体脂只有手动来源)。日期升序。
   const byDate = new Map<

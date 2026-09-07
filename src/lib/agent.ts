@@ -11,6 +11,7 @@ import {
   savePlanAdvice,
   queryAdviceHistory,
   getUserProfile,
+  getRecoverySnapshots,
   getCoachNotes,
   getActiveCoachNotes,
   applyCoachNoteOps,
@@ -204,6 +205,40 @@ export const agentTools: AgentTools = {
     }),
     execute: async ({ days }) => queryAdviceHistory(days),
   }),
+  query_period_review: tool({
+    description:
+      "查询阶段复盘数据包(默认近 30 天):每日恢复分快照序列(恢复分/睡眠债/ACWR/form/周负荷,随日期升序)、训练记录精简列表(日期/容量/RPE/时长)、体重体脂趋势、建议采纳统计。生成阶段复盘时必调",
+    inputSchema: z.object({
+      days: z.number().int().positive().max(90).default(30).describe("复盘窗口天数"),
+    }),
+    execute: async ({ days }) => {
+      const snapshots = getRecoverySnapshots(days);
+      const logs = queryTrainingHistoryDetailed(days) as TrainingLogRow[];
+      const advice = queryAdviceHistory(days);
+      const adviceStats = {
+        total: advice.length,
+        followed: advice.filter((a) => a.status === "followed").length,
+        partial: advice.filter((a) => a.status === "partial").length,
+        skipped: advice.filter((a) => a.status === "skipped").length,
+        pending: advice.filter((a) => a.status === "pending").length,
+      };
+      return {
+        days,
+        snapshots,
+        training: logs
+          .map((l) => ({
+            date: l.date,
+            duration: l.duration,
+            total_volume: l.total_volume as number | null,
+            rpe: l.rpe,
+          }))
+          .reverse(),
+        body: queryBodyComposition(days),
+        adviceStats,
+        advice,
+      };
+    },
+  }),
 };
 
 // 教练对话入口:/plan 页多轮对话,首次可以是恢复分析或排课请求,后续自由追问。
@@ -327,6 +362,43 @@ export function createSummaryStream(signal?: AbortSignal) {
     [{ role: "user", content: `今天是 ${localToday()}，请总结我最近 7 天的训练情况。` }],
     summaryTools,
     4,
+    { signal }
+  );
+}
+
+// --- 阶段复盘(月报):基于恢复快照 + 训练/体成分 + 建议闭环,生成后由 route 落库 ---
+
+const MONTHLY_PROMPT = `你是一位专业的力量训练教练，为用户生成一份阶段复盘（默认近 30 天），帮他看清趋势并定下阶段重点。
+
+## 数据
+
+- 必调一次 query_period_review(days=30)：恢复分快照序列、训练记录、体重体脂、建议采纳统计都在里面
+- 恢复分快照从功能上线才开始积累：数量少（<10 天）就少谈恢复趋势，以训练与体成分为主，并注明"恢复趋势样本尚短"
+- 必要时补充 query_recovery_status 或 query_advice_history 查细节，不要重复调用
+
+## 复盘结构
+
+1. **训练概况**：总次数、总容量、平均 RPE；前半段 vs 后半段的容量对比说明训练量在涨、平还是退
+2. **恢复与负荷**：恢复分均值与最低段、睡眠债反复出现的时段、ACWR 走势——把"练多狠"和"恢复怎样"对上号
+3. **体成分**：体重/体脂方向，结合训练目标（画像/笔记）评价是否符合预期
+4. **建议采纳**：采纳率与被跳过的建议类型，明确说明你据此对自己的判断口径做了什么修正
+5. **下阶段重点**：2-3 条具体可执行（频率/容量/睡眠目标级别），必须与用户的目标和现实约束一致
+
+## 规则
+
+- 工具返回的数据就是事实，引用具体数字，不要说"数据不可用"
+- 空数据段如实说明样本不足，不要编造趋势
+- 简洁中文，小标题分段；不需要调用任何保存工具`;
+
+export function createMonthlyStream(signal?: AbortSignal) {
+  const monthlyTools = Object.fromEntries(
+    Object.entries(agentTools).filter(([name]) => name !== "save_training_plan")
+  );
+  return agentLoop(
+    MONTHLY_PROMPT,
+    [{ role: "user", content: `今天是 ${localToday()}，请复盘我最近 30 天的训练、恢复与建议执行情况。` }],
+    monthlyTools,
+    6,
     { signal }
   );
 }

@@ -14,6 +14,7 @@ import ExerciseProgress from "@/components/ExerciseProgress";
 import TrainingCalendar from "@/components/TrainingCalendar";
 import StatsPanel from "@/components/StatsPanel";
 import WeeklySummary from "@/components/WeeklySummary";
+import MonthlyReview from "@/components/MonthlyReview";
 import type { RecoveryFeatures, RecoveryScore } from "@/lib/recovery";
 import type { Readiness } from "@/lib/readiness";
 import type { SleepNeedResult, TrainingStatus } from "@/lib/training-status";
@@ -244,8 +245,9 @@ export default function DashboardPage() {
           )}
 
           {tab === "report" && (
-            <div key="report" className="animate-fade-up">
+            <div key="report" className="animate-fade-up space-y-4">
               <WeeklySummary />
+              <MonthlyReview />
             </div>
           )}
         </>

@@ -103,6 +103,29 @@ function createTables(db: Database.Database) {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS ux_insights_rule_day ON insights(rule_id, date);
 
+    CREATE TABLE IF NOT EXISTS recovery_snapshots (
+      date TEXT PRIMARY KEY,
+      score INTEGER,
+      zone TEXT,
+      hrv_z REAL,
+      resting_hr_dev REAL,
+      sleep_debt_minutes INTEGER,
+      load_7d INTEGER,
+      acwr REAL,
+      form REAL,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      updated_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS period_reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL CHECK (kind IN ('monthly')),
+      period_start TEXT NOT NULL,
+      period_end TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
     CREATE TABLE IF NOT EXISTS training_template (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -851,6 +874,86 @@ export function getActiveInsights(days: number = 3, limit: number = 5): InsightR
 export function dismissInsight(id: number): void {
   const db = getDb();
   db.prepare("UPDATE insights SET dismissed_at = datetime('now','localtime') WHERE id = ?").run(id);
+}
+
+// --- 阶段复盘(每日恢复快照 + 周期报告持久化) ---
+
+export interface RecoverySnapshot {
+  date: string;
+  score: number | null;
+  zone: string | null;
+  hrv_z: number | null;
+  resting_hr_dev: number | null;
+  sleep_debt_minutes: number | null;
+  load_7d: number | null;
+  acwr: number | null;
+  form: number | null;
+}
+
+// dashboard 每次计算顺手存档:同日重算刷新数值,趋势随数据修正。
+export function upsertRecoverySnapshot(s: {
+  date: string;
+  score: number | null;
+  zone: string | null;
+  hrv_z: number | null;
+  resting_hr_dev: number | null;
+  sleep_debt_minutes: number | null;
+  load_7d: number | null;
+  acwr: number | null;
+  form: number | null;
+}): void {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO recovery_snapshots (date, score, zone, hrv_z, resting_hr_dev, sleep_debt_minutes, load_7d, acwr, form, updated_at)
+    VALUES (@date, @score, @zone, @hrv_z, @resting_hr_dev, @sleep_debt_minutes, @load_7d, @acwr, @form, datetime('now','localtime'))
+    ON CONFLICT(date) DO UPDATE SET
+      score = excluded.score, zone = excluded.zone, hrv_z = excluded.hrv_z,
+      resting_hr_dev = excluded.resting_hr_dev, sleep_debt_minutes = excluded.sleep_debt_minutes,
+      load_7d = excluded.load_7d, acwr = excluded.acwr, form = excluded.form,
+      updated_at = datetime('now','localtime')
+  `).run(s);
+}
+
+// 近 days 天快照,日期升序(阶段复盘的输入)。
+export function getRecoverySnapshots(days: number): RecoverySnapshot[] {
+  const db = getDb();
+  return db
+    .prepare(`
+      SELECT date, score, zone, hrv_z, resting_hr_dev, sleep_debt_minutes, load_7d, acwr, form
+        FROM recovery_snapshots
+       WHERE date >= date('now','localtime','-' || ? || ' days')
+       ORDER BY date ASC
+    `)
+    .all(days) as RecoverySnapshot[];
+}
+
+export interface PeriodReport {
+  id: number;
+  kind: "monthly";
+  period_start: string;
+  period_end: string;
+  content: string;
+  created_at: string;
+}
+
+export function savePeriodReport(kind: "monthly", periodStart: string, periodEnd: string, content: string): number {
+  const db = getDb();
+  const { lastInsertRowid } = db
+    .prepare("INSERT INTO period_reports (kind, period_start, period_end, content) VALUES (?, ?, ?, ?)")
+    .run(kind, periodStart, periodEnd, content);
+  return Number(lastInsertRowid);
+}
+
+export function listPeriodReports(kind: "monthly", limit: number = 12): PeriodReport[] {
+  const db = getDb();
+  return db
+    .prepare("SELECT * FROM period_reports WHERE kind = ? ORDER BY created_at DESC, id DESC LIMIT ?")
+    .all(kind, limit) as PeriodReport[];
+}
+
+export function deletePeriodReport(id: number): void {
+  const db = getDb();
+  db.prepare("DELETE FROM period_reports WHERE id = ?").run(id);
 }
 
 // --- Coach notes (教练笔记:跨会话的个人情况记忆) ---
