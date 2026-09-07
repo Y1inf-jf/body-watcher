@@ -110,6 +110,11 @@ function parseIntoMetrics(map: MetricsMap, rawByDate: Map<string, unknown[]>, po
 }
 
 function parseStepsIntoMetrics(map: MetricsMap, rawByDate: Map<string, unknown[]>, points: GoogleDataPoint[]) {
+  // Google Fit 同时保留多个来源的步数(手环 App + 手机 MobileTrack 各记一份),
+  // 直接求和会双计(实测单日 ≈2 倍)。跨来源不叠加:按来源分组求和,
+  // 有可穿戴来源(device.displayName 含 Fitbit)时优先取用——手环最贴近真值,
+  // 手机计步漏记/误判更多;无可穿戴来源时退回取最大来源(通用回退)。
+  const byDate = new Map<string, Map<string, { sum: number; wearable: boolean }>>();
   for (const p of points) {
     const st = p.steps as
       | { interval?: { civilStartTime?: { date?: { year?: number; month?: number; day?: number } } }; count?: unknown }
@@ -117,9 +122,25 @@ function parseStepsIntoMetrics(map: MetricsMap, rawByDate: Map<string, unknown[]
     const date = civilDateStr(st?.interval?.civilStartTime?.date);
     if (!date) continue;
     const count = num(st?.count) ?? 0;
-    const prev = map.get(date);
-    mergeMetrics(map, date, { steps: (prev?.steps ?? 0) + count });
+    const ds = (p as { dataSource?: { device?: { displayName?: string }; dataStreamId?: string } }).dataSource;
+    const src = ds?.dataStreamId || JSON.stringify(ds ?? {});
+    const wearable = /fitbit/i.test(ds?.device?.displayName ?? "");
+    const perSrc = byDate.get(date) ?? new Map<string, { sum: number; wearable: boolean }>();
+    const cur = perSrc.get(src) ?? { sum: 0, wearable };
+    cur.sum += count;
+    perSrc.set(src, cur);
+    byDate.set(date, perSrc);
     pushRaw(rawByDate, "steps", date, p);
+  }
+  for (const [date, perSrc] of byDate) {
+    let wearableSum = 0;
+    let maxSum = 0;
+    for (const { sum, wearable } of perSrc.values()) {
+      maxSum = Math.max(maxSum, sum);
+      if (wearable) wearableSum = Math.max(wearableSum, sum);
+    }
+    const prev = map.get(date);
+    mergeMetrics(map, date, { steps: wearableSum > 0 ? wearableSum : maxSum });
   }
 }
 
