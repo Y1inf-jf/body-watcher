@@ -707,11 +707,12 @@ export function saveTrainingPlan(plan: {
 }) {
   const db = getDb();
   // plan_date 是 Zod optional:LLM 不传时键会缺失,better-sqlite3 对缺失命名参数直接抛错,必须补默认值。
-  const { plan_date = null, ...rest } = plan;
+  // 手动自建计划没有 AI 的分析/恢复评估,置空即可,列表渲染按空值跳过。
+  const { plan_date = null, analysis_summary = "", recovery_assessment = "", advice = "", ...required } = plan;
   const { lastInsertRowid } = db.prepare(`
     INSERT INTO training_plan (date, plan_date, analysis_summary, recovery_assessment, exercises, advice)
     VALUES (@date, @plan_date, @analysis_summary, @recovery_assessment, @exercises, @advice)
-  `).run({ ...rest, plan_date });
+  `).run({ ...required, plan_date, analysis_summary, recovery_assessment, advice });
   return Number(lastInsertRowid);
 }
 

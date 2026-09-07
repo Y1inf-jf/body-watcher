@@ -504,12 +504,77 @@ function PlanHistorySection() {
   >([]);
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
-  useEffect(() => {
+  // 手动录入自己的训练计划(动作行可增删),保存后走与 AI 计划相同的"执行"闭环。
+  const [showForm, setShowForm] = useState(false);
+  const [planDate, setPlanDate] = useState(new Date().toISOString().split("T")[0]);
+  const [targetDate, setTargetDate] = useState("");
+  const [rows, setRows] = useState([
+    { name: "", muscle_group: "", sets: "", reps: "", weight: "" },
+  ]);
+  const [advice, setAdvice] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
+
+  const load = useCallback(() => {
     fetch("/api/plans")
       .then((r) => r.json())
       .then((d) => setPlans(d.plans ?? []))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const resetForm = () => {
+    setPlanDate(new Date().toISOString().split("T")[0]);
+    setTargetDate("");
+    setRows([{ name: "", muscle_group: "", sets: "", reps: "", weight: "" }]);
+    setAdvice("");
+    setFormError("");
+  };
+
+  const savePlan = async () => {
+    setFormError("");
+    const exercises = rows
+      .map((r) => ({
+        name: r.name.trim(),
+        muscle_group: r.muscle_group.trim(),
+        sets: r.sets ? parseInt(r.sets) : NaN,
+        reps: r.reps ? parseInt(r.reps) : NaN,
+        weight: r.weight ? parseFloat(r.weight) : null,
+      }))
+      .filter((r) => r.name || r.muscle_group);
+    if (exercises.length === 0) {
+      setFormError("至少填一个动作");
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch("/api/plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date: planDate,
+          ...(targetDate ? { plan_date: targetDate } : {}),
+          exercises,
+          advice: advice || undefined,
+        }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        setFormError(json.error ?? "保存失败");
+        return;
+      }
+      resetForm();
+      setShowForm(false);
+      load();
+    } catch {
+      setFormError("网络错误,未保存");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const removePlan = async (id: number) => {
     if (!window.confirm("删除这条历史计划?不可恢复。")) return;
@@ -522,10 +587,136 @@ function PlanHistorySection() {
     }
   };
 
-  if (plans.length === 0) return <p className="text-sm text-zinc-600">暂无训练计划</p>;
+  if (plans.length === 0 && !showForm) return <p className="text-sm text-zinc-600">暂无训练计划</p>;
 
   return (
     <div className="space-y-3">
+      {/* 手动录入自己的计划:与 AI 计划同列表、同执行闭环 */}
+      <div className="flex justify-end">
+        <button
+          onClick={() => setShowForm((v) => !v)}
+          className="flex items-center gap-1.5 rounded-lg border border-accent/30 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/20"
+        >
+          {showForm ? "收起表单" : "新建计划"}
+        </button>
+      </div>
+
+      {showForm && (
+        <div className="rounded-lg border border-accent/30 bg-accent/[0.04] p-3">
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            <label className="flex items-center gap-1.5 text-zinc-400">
+              计划日期
+              <input
+                type="date"
+                value={planDate}
+                onChange={(e) => setPlanDate(e.target.value)}
+                className="rounded border border-white/10 bg-white/[0.04] px-2 py-1 text-sm text-zinc-100 [color-scheme:dark]"
+              />
+            </label>
+            <label className="flex items-center gap-1.5 text-zinc-400">
+              目标日期(可选)
+              <input
+                type="date"
+                value={targetDate}
+                onChange={(e) => setTargetDate(e.target.value)}
+                className="rounded border border-white/10 bg-white/[0.04] px-2 py-1 text-sm text-zinc-100 [color-scheme:dark]"
+              />
+            </label>
+          </div>
+
+          <div className="mt-3 space-y-1.5">
+            <div className="flex gap-1.5 text-[10px] uppercase tracking-wider text-zinc-600">
+              <span className="min-w-0 flex-1">动作</span>
+              <span className="w-16 shrink-0">肌群</span>
+              <span className="w-12 shrink-0">组</span>
+              <span className="w-12 shrink-0">次</span>
+              <span className="w-16 shrink-0">kg</span>
+              <span className="w-5 shrink-0" />
+            </div>
+            {rows.map((r, i) => (
+              <div key={i} className="flex gap-1.5">
+                <input
+                  value={r.name}
+                  onChange={(e) =>
+                    setRows((rs) => rs.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))
+                  }
+                  placeholder="如 杠铃卧推"
+                  className="min-w-0 flex-1 rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none"
+                />
+                <input
+                  value={r.muscle_group}
+                  onChange={(e) =>
+                    setRows((rs) => rs.map((x, j) => (j === i ? { ...x, muscle_group: e.target.value } : x)))
+                  }
+                  placeholder="胸"
+                  className="w-16 shrink-0 rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none"
+                />
+                <input
+                  value={r.sets}
+                  onChange={(e) =>
+                    setRows((rs) => rs.map((x, j) => (j === i ? { ...x, sets: e.target.value } : x)))
+                  }
+                  inputMode="numeric"
+                  placeholder="4"
+                  className="w-12 shrink-0 rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-center text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none"
+                />
+                <input
+                  value={r.reps}
+                  onChange={(e) =>
+                    setRows((rs) => rs.map((x, j) => (j === i ? { ...x, reps: e.target.value } : x)))
+                  }
+                  inputMode="numeric"
+                  placeholder="8"
+                  className="w-12 shrink-0 rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-center text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none"
+                />
+                <input
+                  value={r.weight}
+                  onChange={(e) =>
+                    setRows((rs) => rs.map((x, j) => (j === i ? { ...x, weight: e.target.value } : x)))
+                  }
+                  inputMode="decimal"
+                  placeholder="自重"
+                  className="w-16 shrink-0 rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-center text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none"
+                />
+                <button
+                  onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}
+                  className="w-5 shrink-0 text-zinc-600 transition-colors hover:text-zone-red"
+                  aria-label="移除该动作"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() => setRows((rs) => [...rs, { name: "", muscle_group: "", sets: "", reps: "", weight: "" }])}
+              className="flex items-center gap-1 text-xs text-accent transition-colors hover:text-accent/80"
+            >
+              <Plus size={12} /> 添加动作
+            </button>
+          </div>
+
+          <textarea
+            value={advice}
+            onChange={(e) => setAdvice(e.target.value)}
+            placeholder="注意事项(可选),如:组间休息 90 秒,最后一路做到力竭"
+            rows={2}
+            className="mt-3 w-full rounded border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none"
+          />
+
+          {formError && <p className="mt-2 text-xs text-zone-red">{formError}</p>}
+          <div className="mt-3 flex items-center gap-3">
+            <button
+              onClick={savePlan}
+              disabled={saving}
+              className="rounded-lg bg-accent/90 px-4 py-1.5 text-xs font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-40"
+            >
+              {saving ? "保存中..." : "保存计划"}
+            </button>
+            <span className="text-[11px] text-zinc-600">保存后出现在列表里,可点「执行」带入训记,自动闭环</span>
+          </div>
+        </div>
+      )}
+
       {plans.map((plan) => {
         let exercises: { name: string; muscle_group: string; sets: number; reps: number; weight: number }[] = [];
         try {
@@ -535,9 +726,12 @@ function PlanHistorySection() {
         return (
           <details key={plan.id} className="rounded-lg border border-white/5 bg-white/[0.02] p-3">
             <summary className="flex cursor-pointer items-center justify-between gap-3 text-sm">
-              <span className="font-medium text-zinc-200">
+              <span className="min-w-0 truncate font-medium text-zinc-200">
                 {plan.date}
                 {plan.plan_date && <span className="ml-2 text-xs text-zinc-500">目标: {plan.plan_date}</span>}
+                {!plan.recovery_assessment && !plan.analysis_summary && (
+                  <span className="ml-2 rounded border border-white/15 bg-white/5 px-1.5 py-0.5 text-[10px] text-zinc-400">自建</span>
+                )}
               </span>
               <span className="flex items-center gap-2">
                 <span className="text-xs text-zinc-500">{exercises.length} 个动作</span>
@@ -557,14 +751,18 @@ function PlanHistorySection() {
               </span>
             </summary>
             <div className="mt-3 space-y-3">
-              <div className="border-l-2 border-accent/70 pl-3">
-                <div className="mb-1 text-xs text-zinc-500">分析摘要</div>
-                <div className="text-sm text-zinc-300">{plan.analysis_summary}</div>
-              </div>
-              <div className="border-l-2 border-zone-amber/70 pl-3">
-                <div className="mb-1 text-xs text-zinc-500">恢复评估</div>
-                <div className="text-sm text-zinc-300">{plan.recovery_assessment}</div>
-              </div>
+              {plan.analysis_summary && (
+                <div className="border-l-2 border-accent/70 pl-3">
+                  <div className="mb-1 text-xs text-zinc-500">分析摘要</div>
+                  <div className="text-sm text-zinc-300">{plan.analysis_summary}</div>
+                </div>
+              )}
+              {plan.recovery_assessment && (
+                <div className="border-l-2 border-zone-amber/70 pl-3">
+                  <div className="mb-1 text-xs text-zinc-500">恢复评估</div>
+                  <div className="text-sm text-zinc-300">{plan.recovery_assessment}</div>
+                </div>
+              )}
               {exercises.length > 0 && (
                 <div>
                   <div className="mb-2 flex items-center justify-between">
