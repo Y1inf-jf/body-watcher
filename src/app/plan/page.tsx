@@ -1,7 +1,18 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Send, Square, Plus, Trash2, Pin, ClipboardList, HeartPulse, MessageSquarePlus } from "lucide-react";
+import {
+  Send,
+  Square,
+  Plus,
+  Trash2,
+  Pin,
+  ClipboardList,
+  HeartPulse,
+  MessageSquarePlus,
+  ChevronUp,
+  Check,
+} from "lucide-react";
 import Markdown from "@/components/Markdown";
 
 interface ChatMessage {
@@ -92,20 +103,16 @@ export default function PlanPage() {
 
   useEffect(() => {
     fetchNotes();
-    // 恢复会话列表,默认打开最近更新的一条;消息已持久化,刷新/换设备不丢。
+    // 只拉会话列表,不自动打开任何会话(ChatGPT 式):点历史条目才展开,进页保持干净。
     fetch("/api/chat")
       .then((r) => r.json())
       .then((d) => {
         const list: ChatSession[] = (d.sessions ?? []).filter((s: ChatSession) => s.message_count > 0);
         setSessions(list);
-        if (list.length > 0) {
-          setSessionId(list[0].id);
-          openSession(list[0].id);
-        }
       })
       .catch(() => {})
       .finally(() => setHistoryLoaded(true));
-  }, [fetchNotes, openSession]);
+  }, [fetchNotes]);
 
   // 新消息/流式输出时滚到底部。
   useEffect(() => {
@@ -183,7 +190,9 @@ export default function PlanPage() {
   );
 
   // 新建对话:不立刻建会话,首条消息发出时由服务端落库,避免空会话堆积。
-  const newChat = () => {
+  const newChat = () => closeConversation();
+
+  const closeConversation = () => {
     if (streaming) return;
     setSessionId(null);
     sessionIdRef.current = null;
@@ -191,7 +200,12 @@ export default function PlanPage() {
   };
 
   const switchSession = (id: number) => {
-    if (streaming || id === sessionId) return;
+    if (streaming) return;
+    // 再点当前会话 = 收起,回到"只有列表"的干净视图。
+    if (id === sessionId) {
+      closeConversation();
+      return;
+    }
     setSessionId(id);
     openSession(id);
   };
@@ -200,11 +214,7 @@ export default function PlanPage() {
     if (streaming) return;
     if (!window.confirm("删除这条对话?全部消息将一并移除,不可恢复。")) return;
     await fetch(`/api/chat?id=${id}`, { method: "DELETE" });
-    if (id === sessionId) {
-      setSessionId(null);
-      sessionIdRef.current = null;
-      setMessages([]);
-    }
+    if (id === sessionId) closeConversation();
     fetchSessions();
   };
 
@@ -267,10 +277,11 @@ export default function PlanPage() {
                 <button
                   onClick={() => switchSession(s.id)}
                   disabled={streaming}
-                  className="min-w-0 flex-1 truncate text-left text-sm text-zinc-300 transition-colors hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={s.id === sessionId ? "点击收起该对话" : "点击展开该对话"}
+                  className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-sm text-zinc-300 transition-colors hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {s.id === sessionId && <span className="mr-1.5 text-accent">▸</span>}
-                  {s.title || "未命名对话"}
+                  {s.id === sessionId && <Check size={13} className="shrink-0 text-accent" />}
+                  <span className="truncate">{s.title || "未命名对话"}</span>
                 </button>
                 <span className="flex shrink-0 items-center gap-2">
                   <span className="text-[10px] text-zinc-600">
@@ -391,6 +402,18 @@ export default function PlanPage() {
         </div>
       ) : (
         <div className="space-y-3">
+          {sessionId !== null && (
+            <div className="flex justify-end">
+              <button
+                onClick={closeConversation}
+                disabled={streaming}
+                className="flex items-center gap-1 rounded border border-white/10 px-2 py-0.5 text-[11px] text-zinc-500 transition-colors hover:text-zinc-200 disabled:opacity-40"
+                aria-label="收起该对话,返回历史列表"
+              >
+                <ChevronUp size={12} /> 收起对话
+              </button>
+            </div>
+          )}
           {messages.map((m, i) =>
             m.role === "user" ? (
               <div key={i} className="flex justify-end">
