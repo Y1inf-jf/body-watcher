@@ -66,6 +66,12 @@ function buildCoachSystemPrompt(): string {
   if (p.equipment.trim()) profileLines.push(`- 器材/场地：${p.equipment.trim()}`);
   if (p.schedule.trim()) profileLines.push(`- 作息/时间窗：${p.schedule.trim()}`);
   if (p.diet.trim()) profileLines.push(`- 饮食约束：${p.diet.trim()}`);
+  const splitDays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+  const splitText = (p.weeklySplit ?? [])
+    .map((s, i) => (s.trim() ? `${splitDays[i]} ${s.trim()}` : null))
+    .filter(Boolean)
+    .join("；");
+  if (splitText) profileLines.push(`- 每周固定训练安排：${splitText}`);
   const profileBlock =
     profileLines.length > 0
       ? profileLines.join("\n")
@@ -82,6 +88,8 @@ ${notesBlock}
 ## 用户目标与现实约束（结构化档案，设置页维护；排课的训练量、频率与动作选择必须遵守）
 
 ${profileBlock}
+
+用户给出了"每周固定训练安排"时，这是他自己跟的计划：分析与排课默认围绕它展开，不要随意重排或替换；只有当恢复/负荷信号明确不支持某天的安排时，才针对那一天给出调整建议并说明数据理由。
 
 ## 重要规则
 

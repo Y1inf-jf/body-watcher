@@ -6,6 +6,7 @@ import {
   setLlmSettings,
   getUserProfile,
   setUserProfile,
+  normalizeWeeklySplit,
   type SleepTargets,
   type LlmSettings,
   type UserProfile,
@@ -151,6 +152,9 @@ function parseProfile(raw: unknown): UserProfile | string {
     return "profile 文本字段超长或类型错误(不超过 200 字)";
   }
 
+  // 每周固定训练安排:7 项对应周一~周日,每项 ≤40 字;缺省=未跟固定计划。
+  const weeklySplit = normalizeWeeklySplit(v.weeklySplit);
+
   return {
     goal,
     weeklyDaysMin: days.min,
@@ -160,6 +164,7 @@ function parseProfile(raw: unknown): UserProfile | string {
     equipment,
     schedule,
     diet,
+    weeklySplit,
   };
 }
 

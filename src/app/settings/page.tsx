@@ -13,9 +13,11 @@ const EMPTY_PROFILE: UserProfile = {
   equipment: "",
   schedule: "",
   diet: "",
+  weeklySplit: ["", "", "", "", "", "", ""],
 };
 
 const GOAL_OPTIONS = ["增肌", "减脂", "力量", "体态", "健康保持"];
+const WEEKDAY_LABELS = ["一", "二", "三", "四", "五", "六", "日"];
 
 interface SleepTargets {
   minMinutes: number | null;
@@ -496,6 +498,35 @@ export default function SettingsPage() {
               />
             </div>
           ))}
+
+          {/* 每周固定训练安排:教练排课与分析默认围绕它,除非恢复数据亮红灯 */}
+          <div className="flex flex-wrap items-start gap-x-4 gap-y-1">
+            <span className="w-16 shrink-0 pt-1.5 text-sm font-medium text-zinc-200">每周安排</span>
+            <div className="min-w-0 flex-1 basis-64 space-y-1.5">
+              {WEEKDAY_LABELS.map((label, i) => (
+                <div key={label} className="flex items-center gap-2">
+                  <span className="w-8 shrink-0 text-xs text-zinc-500">周{label}</span>
+                  <input
+                    value={profile.weeklySplit[i] ?? ""}
+                    disabled={!loaded}
+                    placeholder={i === 0 ? "如 推(胸肩三头);留空 = 休息" : "训练主题,留空 = 休息"}
+                    className={TEXT_INPUT_CLS}
+                    onChange={(e) =>
+                      setProfile((p) => {
+                        const split = [...(p.weeklySplit ?? [])];
+                        while (split.length < 7) split.push("");
+                        split[i] = e.target.value;
+                        return { ...p, weeklySplit: split };
+                      })
+                    }
+                  />
+                </div>
+              ))}
+              <p className="text-[11px] text-zinc-600">
+                你跟的固定周计划,教练对话时会带上:分析默认对齐它,只有恢复/负荷数据亮红灯才建议调整某天
+              </p>
+            </div>
+          </div>
 
           <div className="flex items-center gap-3 pt-1">
             <button type="submit" disabled={!loaded || profileSaving} className={BTN_CLS}>

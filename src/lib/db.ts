@@ -359,6 +359,8 @@ export interface UserProfile {
   schedule: string;
   /** 饮食约束(忌口/疾病相关),空=未设 */
   diet: string;
+  /** 每周固定训练安排,7 项对应周一~周日,空串=休息/未安排;全空=未跟固定计划 */
+  weeklySplit: string[];
 }
 
 export const USER_PROFILE_KEY = "user_profile";
@@ -372,7 +374,15 @@ const EMPTY_PROFILE: UserProfile = {
   equipment: "",
   schedule: "",
   diet: "",
+  weeklySplit: ["", "", "", "", "", "", ""],
 };
+
+// 周计划规范成恰好 7 项(周一~周日),缺补空、多截断、非数组丢弃。
+export function normalizeWeeklySplit(raw: unknown): string[] {
+  const items = Array.isArray(raw) ? raw.slice(0, 7).map((s) => (typeof s === "string" ? s.trim().slice(0, 40) : "")) : [];
+  while (items.length < 7) items.push("");
+  return items;
+}
 
 export function getUserProfile(): UserProfile {
   const raw = getSetting(USER_PROFILE_KEY);
@@ -380,6 +390,7 @@ export function getUserProfile(): UserProfile {
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const profile: UserProfile = { ...EMPTY_PROFILE, ...parsed } as UserProfile;
+    profile.weeklySplit = normalizeWeeklySplit(parsed.weeklySplit);
     // 旧版单值字段兼容:goal 字符串→数组;weeklyDays/sessionMinutes→min=max。
     if (typeof parsed.goal === "string") profile.goal = parsed.goal.trim() ? [parsed.goal.trim()] : [];
     const oldDays = parsed.weeklyDays;
@@ -410,7 +421,8 @@ export function setUserProfile(profile: UserProfile): void {
     p.sessionMaxMinutes !== null ||
     p.equipment.trim() !== "" ||
     p.schedule.trim() !== "" ||
-    p.diet.trim() !== "";
+    p.diet.trim() !== "" ||
+    p.weeklySplit.some((s) => s.trim() !== "");
   if (!hasAny) deleteSetting(USER_PROFILE_KEY);
   else setSetting(USER_PROFILE_KEY, JSON.stringify(p));
 }
