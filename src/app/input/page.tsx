@@ -10,6 +10,8 @@ function InputContent() {
   const editId = searchParams.get("edit");
   const dateParam = searchParams.get("date");
   const planParam = searchParams.get("plan");
+  // 建议闭环:从计划卡"执行"进来带上计划 id,保存训练时回链并自动销账该计划的建议。
+  const planId = parseInt(searchParams.get("planId") || "");
 
   // 执行训练计划：URL 的 plan 参数是编码后的动作 JSON，
   // 交给 TrainingForm 的 templateData 预填机制。templateKey 用 planParam
@@ -43,6 +45,7 @@ function InputContent() {
           initialDate={dateParam || undefined}
           templateData={planParam}
           templateKey={planKey}
+          planId={Number.isInteger(planId) && planId > 0 ? planId : null}
         />
       </section>
     </div>

@@ -6,6 +6,9 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 export async function POST(request: NextRequest) {
   const body = await request.json();
   const { date, duration, rpe, notes, exercises } = body;
+  // 从计划卡"执行"进来时带 planId:回链训练记录并把该计划的建议自动销账(见 insertTrainingLog)。
+  const planId = Number(body.planId);
+  const plan_id = Number.isInteger(planId) && planId > 0 ? planId : null;
 
   if (!date || !exercises?.length) {
     return NextResponse.json({ error: "date and exercises are required" }, { status: 400 });
@@ -21,7 +24,7 @@ export async function POST(request: NextRequest) {
   );
 
   const logId = insertTrainingLog(
-    { date, duration: duration || null, total_volume, rpe: rpe || null, notes: notes || null },
+    { date, duration: duration || null, total_volume, rpe: rpe || null, notes: notes || null, plan_id },
     exercises
   );
 

@@ -531,7 +531,7 @@ function PlanHistorySection() {
         try {
           exercises = JSON.parse(plan.exercises || "[]");
         } catch {}
-        const execPlanHref = `/input?plan=${encodeURIComponent(plan.exercises || "[]")}`;
+        const execPlanHref = `/input?plan=${encodeURIComponent(plan.exercises || "[]")}&planId=${plan.id}`;
         return (
           <details key={plan.id} className="rounded-lg border border-white/5 bg-white/[0.02] p-3">
             <summary className="flex cursor-pointer items-center justify-between gap-3 text-sm">

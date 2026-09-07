@@ -8,6 +8,8 @@ import {
   queryBodyComposition,
   queryGoogleDailyMetricsRange,
   saveTrainingPlan,
+  savePlanAdvice,
+  queryAdviceHistory,
   getCoachNotes,
   getActiveCoachNotes,
   applyCoachNoteOps,
@@ -72,11 +74,12 @@ ${notesBlock}
 9. **RPE**：主观疲劳感高（>7）时，选择恢复性训练或休息
 10. **数据优先级**：可穿戴设备数据（query_recovery_status）与手工录入数据并存时，以设备值为准，手工数据作补充
 11. **用户体感优先**：用户对自己身体的当下描述（疼痛、酸胀、精神状态）是第一手信号，与数据结论冲突时明确指出分歧，并以用户体感为准调整建议
+12. **闭环校准**：query_advice_history 是你的判断成绩单。给出建议前先对照近期记录：若同类建议反复被跳过（skipped）或用户回填体感与你的判断持续背离（如你判"该降档"但用户回填 followed 且 actual_rpe 不高、恢复反馈良好），说明模型对该用户偏保守，应主动收敛此类建议并在措辞里点明"过去 N 次这类建议你的实际反馈是……"；反之若听劝后恢复改善，则延续。让判断随用户真实反应收敛，而不是一味套通用阈值
 
 ## 工作流程
 
-- **恢复分析类请求**：先调用 query_recovery_status 获取恢复分、设备信号与训练负荷，需要时补充肌群恢复查询；输出结构：今日恢复分与色带 → 昨晚睡眠 → 自主神经信号 → 训练负荷状态 → 今日建议（强度定位、练什么、1-2 条注意点）
-- **排课请求**：query_recovery_status → 查询各肌群恢复状态与近期训练历史 → 综合分析后生成训练计划，调用 save_training_plan 保存
+- **恢复分析类请求**：先调用 query_recovery_status 获取恢复分、设备信号与训练负荷，再调用 query_advice_history 查看近期建议与你回填的采纳情况/体感，需要时补充肌群恢复查询；输出结构：今日恢复分与色带 → 昨晚睡眠 → 自主神经信号 → 训练负荷状态 → 今日建议（强度定位、练什么、1-2 条注意点）
+- **排课请求**：query_recovery_status → query_advice_history → 查询各肌群恢复状态与近期训练历史 → 综合分析后生成训练计划，调用 save_training_plan 保存
 
 ## 计划保存格式
 
@@ -163,9 +166,24 @@ export const agentTools: AgentTools = {
       advice: z.string().describe("注意事项"),
     }),
     execute: async (params) => {
-      saveTrainingPlan(params);
-      return { ok: true };
+      const planId = saveTrainingPlan(params);
+      // 建议闭环:计划同步存档为一条建议(目标日优先),经"执行"按钮完成训练时自动销账。
+      savePlanAdvice(
+        planId,
+        params.plan_date || params.date,
+        params.recovery_assessment,
+        params.advice || null
+      );
+      return { ok: true, plan_id: planId };
     },
+  }),
+  query_advice_history: tool({
+    description:
+      "查询近期建议闭环记录:每日建议(daily)与计划建议(plan)的原文、你是否采纳(followed=采纳/partial=部分/skipped=未做/pending=待回填)、你回填的体感 RPE 与一句话(body_notes),以及计划建议是否被实际执行(executed>0 表示练了,附 actual_volume/actual_rpe 实际容量与 RPE,未练则 executed=0)。给出恢复分析或排课前先读它,用你的真实反应校准后续判断",
+    inputSchema: z.object({
+      days: z.number().int().positive().max(90).default(14).describe("查询最近天数"),
+    }),
+    execute: async ({ days }) => queryAdviceHistory(days),
   }),
 };
 
@@ -269,13 +287,14 @@ const SUMMARY_PROMPT = `你是一位专业的力量训练教练。请根据用�
 - 工具返回的数据就是用户的实际数据，直接使用即可，不要说"数据不可用"
 - 如果某个工具返回空数组，说明该周没有该类型的数据
 - 恢复趋势优先使用可穿戴设备数据（query_recovery_status 里的 HRV 基线偏离与睡眠负债）
+- 调用一次 query_advice_history(days=7) 获取本周建议与你的采纳回填，用于第 4 点
 
 ## 总结内容
 
 1. **本周训练概况**：训练了几次、练了哪些肌群、总容量
 2. **亮点**：哪些动作有进步（重量/次数提升）
 3. **恢复状态**：HRV、睡眠、疲劳感的趋势
-4. **改进建议**：下周可以调整的地方
+4. **建议采纳与改进**：本周建议你是否照做了（采纳/部分/未做）、体感如何，据此说下周该往哪个方向调，以及你自己哪类建议该更贴合用户实际反应
 
 请用简洁清晰的中文回复，不需要调用任何保存工具。`;
 

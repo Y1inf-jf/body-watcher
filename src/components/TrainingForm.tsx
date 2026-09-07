@@ -104,9 +104,11 @@ interface TrainingFormProps {
   initialDate?: string;
   templateData?: string | null;
   templateKey?: number;
+  // 建议闭环:从计划"执行"进来时带上计划 id,POST 时回链训练记录。
+  planId?: number | null;
 }
 
-export default function TrainingForm({ editId, initialDate, templateData, templateKey }: TrainingFormProps) {
+export default function TrainingForm({ editId, initialDate, templateData, templateKey, planId }: TrainingFormProps) {
   const [date, setDate] = useState(initialDate || new Date().toISOString().split("T")[0]);
   const [duration, setDuration] = useState("");
   const [rpe, setRpe] = useState("");
@@ -332,6 +334,8 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
 
     const body = {
       ...(editId ? { id: editId } : {}),
+      // 编辑已有记录不重绑计划;仅新建执行时回链。
+      ...(!editId && planId ? { planId } : {}),
       date,
       duration: duration ? parseInt(duration) : null,
       rpe: rpe ? parseInt(rpe) : null,

@@ -6,7 +6,7 @@ import { Activity, Dumbbell, FileText } from "lucide-react";
 import TrendChart from "@/components/TrendChart";
 import RecoveryPanel from "@/components/RecoveryPanel";
 import RecoveryScoreCard from "@/components/RecoveryScoreCard";
-import ReadinessCard from "@/components/ReadinessCard";
+import ReadinessCard, { type AdviceView } from "@/components/ReadinessCard";
 import TrainingStatusCard from "@/components/TrainingStatusCard";
 import PlanCard from "@/components/PlanCard";
 import ExerciseProgress from "@/components/ExerciseProgress";
@@ -25,6 +25,7 @@ interface DashboardData {
   trainingStatus?: TrainingStatus;
   sleepNeed?: SleepNeedResult | null;
   readiness?: Readiness;
+  advice?: AdviceView;
   chartSeries?: {
     date: string;
     hrv: number | null;
@@ -114,7 +115,13 @@ export default function DashboardPage() {
       </div>
 
       {data.readiness && data.recovery && data.trainingStatus && (
-        <ReadinessCard readiness={data.readiness} recovery={data.recovery.score} status={data.trainingStatus} />
+        <ReadinessCard
+          readiness={data.readiness}
+          recovery={data.recovery.score}
+          status={data.trainingStatus}
+          advice={data.advice}
+          onAdviceUpdate={(a) => setData((d) => (d ? { ...d, advice: a } : d))}
+        />
       )}
 
       {data.recovery && (

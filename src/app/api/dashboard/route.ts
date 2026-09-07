@@ -6,10 +6,12 @@ import {
   queryGoogleDailyMetricsRange,
   queryTrainingHistoryDetailed,
   getSleepTargets,
+  upsertDailyAdvice,
 } from "@/lib/db";
 import {
   computeRecoveryFeatures,
   computeRecoveryScore,
+  localToday,
   type GoogleMetricRow,
   type TrainingLogRow,
 } from "@/lib/recovery";
@@ -36,6 +38,8 @@ export async function GET() {
   const readiness = computeReadiness(trainingStatus, recoveryScore, {
     manualSleepQuality: latestManualSleepQuality(healthMetrics as Record<string, unknown>[]),
   });
+  // 建议闭环:日建议落档(同日重算只刷新文案,不动已回填的采纳状态/体感)。
+  const advice = upsertDailyAdvice(localToday(), readiness.headline, readiness.detail);
 
   // 趋势图数据:设备指标为主,手动录入补缺(体脂只有手动来源)。日期升序。
   const byDate = new Map<
@@ -94,6 +98,7 @@ export async function GET() {
     trainingStatus,
     sleepNeed,
     readiness,
+    advice,
     chartSeries,
   });
 }

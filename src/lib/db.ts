@@ -74,6 +74,23 @@ function createTables(db: Database.Database) {
       created_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
 
+    CREATE TABLE IF NOT EXISTS advice_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date TEXT NOT NULL,
+      source TEXT NOT NULL CHECK (source IN ('daily', 'plan')),
+      plan_id INTEGER,
+      headline TEXT NOT NULL,
+      detail TEXT,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'followed', 'partial', 'skipped')),
+      felt_rpe INTEGER,
+      body_notes TEXT,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      resolved_at TEXT
+    );
+    -- 日建议每天一条(dashboard 加载时 upsert);plan 建议一天可多条,按 plan_id 关联。
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_advice_daily ON advice_log(date) WHERE source = 'daily';
+
     CREATE TABLE IF NOT EXISTS training_template (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -203,6 +220,10 @@ function migrate(db: Database.Database) {
   }
   if (!logCols.find((c) => c.name === "title")) {
     db.exec("ALTER TABLE training_log ADD COLUMN title TEXT");
+  }
+  // 建议闭环:训练记录回链它执行的计划。
+  if (!logCols.find((c) => c.name === "plan_id")) {
+    db.exec("ALTER TABLE training_log ADD COLUMN plan_id INTEGER");
   }
   // 教练笔记:pinned=硬约束(不被条数上限挤出);expires_at=时效信息的到期日。
   const noteCols = db.prepare("PRAGMA table_info(coach_notes)").all() as { name: string }[];
@@ -377,6 +398,7 @@ export function insertTrainingLog(data: {
   total_volume?: number;
   rpe?: number;
   notes?: string;
+  plan_id?: number | null;
 }, exercises: {
   exercise_name: string;
   muscle_group: string;
@@ -388,19 +410,31 @@ export function insertTrainingLog(data: {
 }[]) {
   const db = getDb();
   const insertLog = db.prepare(`
-    INSERT INTO training_log (date, duration, total_volume, rpe, notes)
-    VALUES (@date, @duration, @total_volume, @rpe, @notes)
+    INSERT INTO training_log (date, duration, total_volume, rpe, notes, plan_id)
+    VALUES (@date, @duration, @total_volume, @rpe, @notes, @plan_id)
   `);
   const insertExercise = db.prepare(`
     INSERT INTO training_exercise (training_log_id, exercise_name, muscle_group, sets, reps, weight, bodyweight, rpe)
     VALUES (?, @exercise_name, @muscle_group, @sets, @reps, @weight, @bodyweight, @rpe)
   `);
+  // 可选键缺失时 better-sqlite3 对命名参数直接抛错,统一补齐。
+  const logRow = { ...data, plan_id: data.plan_id ?? null };
 
   const transaction = db.transaction(() => {
-    const result = insertLog.run(data);
+    const result = insertLog.run(logRow);
     const logId = result.lastInsertRowid;
     for (const ex of exercises) {
       insertExercise.run(logId, ex);
+    }
+    // 自动回链即自动销账:执行了哪条计划,该计划的建议记"已采纳",体感取本次训练 RPE。
+    if (data.plan_id) {
+      db.prepare(`
+        UPDATE advice_log
+           SET status = 'followed',
+               felt_rpe = COALESCE(?, felt_rpe),
+               resolved_at = datetime('now', 'localtime')
+         WHERE source = 'plan' AND plan_id = ? AND status = 'pending'
+      `).run(data.rpe ?? null, data.plan_id);
     }
     return logId;
   });
@@ -566,10 +600,11 @@ export function saveTrainingPlan(plan: {
   const db = getDb();
   // plan_date 是 Zod optional:LLM 不传时键会缺失,better-sqlite3 对缺失命名参数直接抛错,必须补默认值。
   const { plan_date = null, ...rest } = plan;
-  return db.prepare(`
+  const { lastInsertRowid } = db.prepare(`
     INSERT INTO training_plan (date, plan_date, analysis_summary, recovery_assessment, exercises, advice)
     VALUES (@date, @plan_date, @analysis_summary, @recovery_assessment, @exercises, @advice)
   `).run({ ...rest, plan_date });
+  return Number(lastInsertRowid);
 }
 
 export function getTrainingPlans(limit: number = 20) {
@@ -582,6 +617,116 @@ export function getTrainingPlans(limit: number = 20) {
 export function deleteTrainingPlan(id: number): void {
   const db = getDb();
   db.prepare("DELETE FROM training_plan WHERE id = ?").run(id);
+}
+
+// --- Advice closed loop (建议闭环:日建议/计划建议的采纳与体感回填) ---
+
+export interface AdviceRow {
+  id: number;
+  date: string;
+  source: "daily" | "plan";
+  plan_id: number | null;
+  headline: string;
+  detail: string | null;
+  status: "pending" | "followed" | "partial" | "skipped";
+  felt_rpe: number | null;
+  body_notes: string | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+export const ADVICE_STATUSES = ["followed", "partial", "skipped"] as const;
+export type AdviceStatus = (typeof ADVICE_STATUSES)[number];
+
+// 日建议 upsert:同日再算(headline 变了)就刷新文案,但用户已回填的状态/体感不覆盖。
+export function upsertDailyAdvice(
+  date: string,
+  headline: string,
+  detail: string | null
+): AdviceRow {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO advice_log (date, source, headline, detail)
+    VALUES (?, 'daily', ?, ?)
+    ON CONFLICT(date) WHERE source = 'daily'
+    DO UPDATE SET headline = excluded.headline, detail = excluded.detail
+  `).run(date, headline, detail);
+  return db
+    .prepare("SELECT * FROM advice_log WHERE source = 'daily' AND date = ?")
+    .get(date) as AdviceRow;
+}
+
+// 计划建议存档:保存训练计划的同时记一条 source='plan' 的建议,
+// 日期用目标日(plan_date),无目标日则用生成日;执行该计划时自动销账。
+export function savePlanAdvice(planId: number, date: string, headline: string, detail: string | null): void {
+  const db = getDb();
+  db.prepare("INSERT INTO advice_log (date, source, plan_id, headline, detail) VALUES (?, 'plan', ?, ?, ?)").run(
+    date,
+    planId,
+    headline,
+    detail
+  );
+}
+
+export function getAdvice(id: number): AdviceRow | undefined {
+  const db = getDb();
+  return db.prepare("SELECT * FROM advice_log WHERE id = ?").get(id) as
+    | AdviceRow
+    | undefined;
+}
+
+// 快捷反馈回填:状态必给,体感 RPE/一句话可选(可反复修改)。
+export function resolveAdvice(
+  id: number,
+  status: AdviceStatus,
+  feltRpe: number | null,
+  bodyNotes: string | null
+): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE advice_log
+       SET status = @status,
+           felt_rpe = COALESCE(@feltRpe, felt_rpe),
+           body_notes = COALESCE(@bodyNotes, body_notes),
+           resolved_at = datetime('now', 'localtime')
+     WHERE id = @id
+  `).run({ id, status, feltRpe, bodyNotes });
+}
+
+// 给 AI 的闭环读数:近期建议 + 执行情况。plan 建议附带该计划实际练了什么
+// (回链 training_log 的容量/RPE),没练则显式标"未执行"。
+export function queryAdviceHistory(days: number) {
+  const db = getDb();
+  const rows = db
+    .prepare(`
+      SELECT a.*,
+             (SELECT COUNT(*) FROM training_log tl WHERE tl.plan_id = a.plan_id) AS executed,
+             (SELECT SUM(tl.total_volume) FROM training_log tl WHERE tl.plan_id = a.plan_id) AS actual_volume,
+             (SELECT MAX(tl.rpe) FROM training_log tl WHERE tl.plan_id = a.plan_id) AS actual_rpe
+        FROM advice_log a
+       WHERE a.date >= date('now', 'localtime', '-' || ? || ' days')
+       ORDER BY a.date DESC, a.id DESC
+       LIMIT 40
+    `)
+    .all(days) as (AdviceRow & {
+      executed: number;
+      actual_volume: number | null;
+      actual_rpe: number | null;
+    })[];
+  // 只回传给判断有用的字段,控制进提示词的 token 量;detail 以 advice 名义给 AI(与训练计划表字段一致)。
+  return rows.map((a) => ({
+    date: a.date,
+    source: a.source,
+    status: a.status,
+    headline: a.headline,
+    felt_rpe: a.felt_rpe,
+    ...(a.body_notes ? { body_notes: a.body_notes } : {}),
+    ...(a.detail ? { advice: a.detail } : {}),
+    ...(a.plan_id ? { plan_id: a.plan_id } : {}),
+    executed: a.executed,
+    actual_volume: a.actual_volume,
+    actual_rpe: a.actual_rpe,
+  }));
 }
 
 // --- Coach notes (教练笔记:跨会话的个人情况记忆) ---
