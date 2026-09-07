@@ -338,6 +338,16 @@ export default function PlanPage() {
         </div>
       </details>
 
+      {/* 历史计划:保留执行闭环,默认收起不占版面 */}
+      <details className="panel mb-4 p-4">
+        <summary className="cursor-pointer text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">
+          Plan History · 历史计划
+        </summary>
+        <div className="mt-3">
+          <PlanHistorySection />
+        </div>
+      </details>
+
       {/* 会话列表即对话:每条是可展开的卡片,展开后就地显示消息流与追问输入 */}
       <div className="space-y-2">
         {/* 无会话时的引导卡:快捷起头 */}
@@ -420,16 +430,6 @@ export default function PlanPage() {
           );
         })}
       </div>
-
-      {/* 历史计划:保留执行闭环,默认收起不占版面 */}
-      <details className="panel mt-5 p-4">
-        <summary className="cursor-pointer text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">
-          Plan History · 历史计划
-        </summary>
-        <div className="mt-3">
-          <PlanHistorySection />
-        </div>
-      </details>
     </div>
   );
 
