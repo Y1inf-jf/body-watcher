@@ -1,6 +1,6 @@
 // 恢复/合成建议的回归验证脚本(手动运行,无测试框架依赖): npx -y tsx scripts/verify-readiness.mts
 import { computeRecoveryFeatures, computeRecoveryScore } from "../src/lib/recovery";
-import { computeTrainingStatus } from "../src/lib/training-status";
+import { computeTrainingStatus, computeSleepNeed } from "../src/lib/training-status";
 import { computeReadiness } from "../src/lib/readiness";
 import { mergeManualHealth, latestManualSleepQuality } from "../src/lib/health-merge";
 import type { GoogleMetricRow, TrainingLogRow } from "../src/lib/recovery";
@@ -45,6 +45,48 @@ function sleepRow(date: string, inBed: number | null, awake: number | null = 0, 
     sleepRow(`2026-09-0${i + 1}`, 480, 0, 50, 60));
   const f = computeRecoveryFeatures(rows);
   check("正常睡眠债≈0", Math.abs(f.sleep.debtMinutes ?? 99) <= 5, f.sleep.debtMinutes);
+}
+
+// ---------- 1.5 三档睡眠目标 ----------
+console.log("[睡眠目标]");
+{
+  // 两晚差睡眠(380)混在好觉里:均值参照被拉低,min 目标把参照线抬回 500
+  const rows: GoogleMetricRow[] = [
+    sleepRow("2026-09-01", 480), sleepRow("2026-09-02", 480), sleepRow("2026-09-03", 480),
+    sleepRow("2026-09-04", 480), sleepRow("2026-09-05", 480), sleepRow("2026-09-06", 480, 100),
+    sleepRow("2026-09-07", 480, 100), sleepRow("2026-09-08", 480),
+  ];
+  const noMin = computeRecoveryFeatures(rows);
+  const withMin = computeRecoveryFeatures(rows, { sleepTargets: { minMinutes: 500, targetMinutes: null, idealMinutes: null } });
+  const lowMin = computeRecoveryFeatures(rows, { sleepTargets: { minMinutes: 300, targetMinutes: null, idealMinutes: null } });
+  check("min>均值 → 参照线抬高、债务更大", (withMin.sleep.debtMinutes ?? 0) > (noMin.sleep.debtMinutes ?? 0), [noMin.sleep.debtMinutes, withMin.sleep.debtMinutes]);
+  check("参照线回显为目标值", withMin.sleep.debtRefMinutes === 500, withMin.sleep.debtRefMinutes);
+  check("min<均值 → 目标不拉低参照", lowMin.sleep.debtMinutes === noMin.sleep.debtMinutes, [lowMin.sleep.debtMinutes, noMin.sleep.debtMinutes]);
+}
+{
+  // 冷启动只有一晚:无目标算不了债,设了 min 就能算
+  const cold = [sleepRow("2026-09-08", 400, 40)]; // 实际 360
+  check("冷启动无目标 → 债为 null", computeRecoveryFeatures(cold).sleep.debtMinutes === null);
+  const coldT = computeRecoveryFeatures(cold, { sleepTargets: { minMinutes: 450, targetMinutes: null, idealMinutes: null } });
+  check("冷启动设 min=450 → 债 90", coldT.sleep.debtMinutes === 90, coldT.sleep.debtMinutes);
+}
+{
+  // 今晚建议:target 抬地板、ideal 封顶
+  const good: GoogleMetricRow[] = Array.from({ length: 8 }, (_, i) => sleepRow(`2026-09-0${i + 1}`, 480, 0));
+  const f = computeRecoveryFeatures(good);
+  const needAvg = computeSleepNeed(f.sleep, 0);
+  check("无目标地板=均值", needAvg?.base === 480 && needAvg.baseSource === "avg7d", needAvg);
+  const needTgt = computeSleepNeed(f.sleep, 0, { targetMinutes: 510 });
+  check("target 抬高地板", needTgt?.base === 510 && needTgt.baseSource === "target", needTgt);
+  const needLow = computeSleepNeed(f.sleep, 0, { targetMinutes: 450 });
+  check("target 低于均值不降地板", needLow?.baseSource === "avg7d" && needLow.base === 480, needLow);
+  const bad: GoogleMetricRow[] = [
+    ...Array.from({ length: 6 }, (_, i) => sleepRow(`2026-09-0${i + 1}`, 480, 0)),
+    sleepRow("2026-09-07", 480, 100), sleepRow("2026-09-08", 480),
+  ];
+  const fb = computeRecoveryFeatures(bad);
+  const needCap = computeSleepNeed(fb.sleep, 300, { targetMinutes: 480, idealMinutes: 490 });
+  check("ideal 封顶生效", needCap?.minutes === 490, needCap);
 }
 
 // ---------- 2. 手动合并 ----------

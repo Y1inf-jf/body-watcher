@@ -51,6 +51,9 @@ export default function RecoveryScoreCard({
   const zone = score.zone ? RECOVERY_ZONE_META[score.zone] : null;
   const { hrv, restingHr, sleep } = features;
   const debt = sleep.debtMinutes;
+  // 债务参照线是"目标底线"抬起来的(还是历史均值),标注给用户的口径不一样。
+  const minTarget = features.targets.minMinutes;
+  const refIsTarget = minTarget !== null && (sleep.avgAsleep7d === null || minTarget > sleep.avgAsleep7d);
 
   return (
     <Card glowColor={zone?.hex} className="animate-fade-up p-5">
@@ -114,7 +117,7 @@ export default function RecoveryScoreCard({
               debt == null
                 ? "负债未知"
                 : debt > 0
-                  ? `负债 ${fmtDuration(debt)} · 近两晚最差`
+                  ? `负债 ${fmtDuration(debt)} · ${refIsTarget ? "目标底线" : "近两晚最差"}`
                   : debt < 0
                     ? `盈余 ${fmtDuration(-debt)}`
                     : "无负债"
@@ -123,7 +126,13 @@ export default function RecoveryScoreCard({
           <SignalRow
             label="今晚建议"
             value={sleepNeed ? fmtDuration(sleepNeed.minutes) : "—"}
-            sub={sleepNeed ? `均值 ${fmtDuration(sleepNeed.base)} 打底` : "需 ≥7 天睡眠数据"}
+            sub={
+              sleepNeed
+                ? sleepNeed.baseSource === "target"
+                  ? `目标 ${fmtDuration(sleepNeed.base)} 打底`
+                  : `均值 ${fmtDuration(sleepNeed.base)} 打底`
+                : "设目标或需 ≥7 天睡眠数据"
+            }
           />
           <p className="mt-2 text-[10px] text-zinc-600">
             50 = 你的正常水平 · 40% HRV + 30% 静息心率 + 30% 睡眠

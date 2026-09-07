@@ -5,6 +5,7 @@ import {
   getRecentTrainings,
   queryGoogleDailyMetricsRange,
   queryTrainingHistoryDetailed,
+  getSleepTargets,
 } from "@/lib/db";
 import {
   computeRecoveryFeatures,
@@ -26,10 +27,11 @@ export async function GET() {
   // 手动录入补缺:睡眠差/体感这类信号往往是用户先手动记的,冷启动期(基线未就绪)
   // 靠这些字段也能把恢复侧分档跑起来。口径:同日同字段设备值为 null 时用手动态。
   const mergedRows = mergeManualHealth(googleRows, healthMetrics as Record<string, unknown>[]);
-  const recoveryFeatures = computeRecoveryFeatures(mergedRows);
+  const sleepTargets = getSleepTargets();
+  const recoveryFeatures = computeRecoveryFeatures(mergedRows, { sleepTargets });
   const recoveryScore = computeRecoveryScore(recoveryFeatures);
   const trainingStatus = computeTrainingStatus(queryTrainingHistoryDetailed(35) as TrainingLogRow[]);
-  const sleepNeed = computeSleepNeed(recoveryFeatures.sleep, trainingStatus.yesterdayLoad);
+  const sleepNeed = computeSleepNeed(recoveryFeatures.sleep, trainingStatus.yesterdayLoad, sleepTargets);
   // 今日建议:恢复(扛不扛得住) × 负荷(练没练多)合成一个行动结论。
   const readiness = computeReadiness(trainingStatus, recoveryScore, {
     manualSleepQuality: latestManualSleepQuality(healthMetrics as Record<string, unknown>[]),

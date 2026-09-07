@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
+import type { SleepTargets } from "./recovery";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "body-watcher.db");
@@ -163,6 +164,12 @@ function createTables(db: Database.Database) {
       trains_found INTEGER,
       fetched_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
+
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
   `);
 }
 
@@ -196,6 +203,57 @@ function migrate(db: Database.Database) {
   }
   if (!noteCols.find((c) => c.name === "expires_at")) {
     db.exec("ALTER TABLE coach_notes ADD COLUMN expires_at TEXT");
+  }
+}
+
+// --- App settings（用户可调参数，KV 存储） ---
+
+export function getSetting(key: string): string | null {
+  const db = getDb();
+  const row = db.prepare("SELECT value FROM app_settings WHERE key = ?").get(key) as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+export function setSetting(key: string, value: string): void {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO app_settings (key, value, updated_at)
+    VALUES (?, ?, datetime('now', 'localtime'))
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+  `).run(key, value);
+}
+
+export function deleteSetting(key: string): void {
+  const db = getDb();
+  db.prepare("DELETE FROM app_settings WHERE key = ?").run(key);
+}
+
+// 睡眠三档目标(分钟,null=未设):min=债务参照线地板;target=今晚建议地板;ideal=封顶。
+// 类型定义随算法走(recovery.ts),这里只做存储映射。
+export type { SleepTargets };
+
+const SLEEP_TARGET_KEYS: Record<keyof SleepTargets, string> = {
+  minMinutes: "sleep_min_minutes",
+  targetMinutes: "sleep_target_minutes",
+  idealMinutes: "sleep_ideal_minutes",
+};
+
+export function getSleepTargets(): SleepTargets {
+  const out = {} as SleepTargets;
+  for (const key of Object.keys(SLEEP_TARGET_KEYS) as (keyof SleepTargets)[]) {
+    const raw = getSetting(SLEEP_TARGET_KEYS[key]);
+    const n = raw === null ? NaN : Number(raw);
+    out[key] = Number.isFinite(n) ? Math.round(n) : null;
+  }
+  return out;
+}
+
+// 传 null 的档位删除设置记录(回到"未设=纯历史均值"的现状行为)。
+export function setSleepTargets(targets: SleepTargets): void {
+  for (const key of Object.keys(SLEEP_TARGET_KEYS) as (keyof SleepTargets)[]) {
+    const v = targets[key];
+    if (v === null) deleteSetting(SLEEP_TARGET_KEYS[key]);
+    else setSetting(SLEEP_TARGET_KEYS[key], String(v));
   }
 }
 

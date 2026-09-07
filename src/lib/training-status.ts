@@ -218,21 +218,31 @@ export function computeWeeklyLoad(series: DailyLoadPoint[]): WeeklyLoadResult {
 
 export interface SleepNeedResult {
   minutes: number; // 今晚建议在床时长
-  base: number; // 个人近 7 天均值
+  base: number; // 地板:历史均值与用户目标取较高者
+  baseSource: "avg7d" | "target"; // 地板实际由哪边决定(UI 措辞用)
   debtComponent: number; // 债务补偿部分
   loadComponent: number; // 昨日负荷补偿部分
 }
 
-// 今晚该睡多久:个人均值打底,睡眠债按 1/3 偿还(不鼓励一次补爆),
-// 昨天练得重再加 20 分钟恢复预算。夹在 [5h, 12h]。
-export function computeSleepNeed(sleep: SleepSummary, yesterdayLoad: number): SleepNeedResult | null {
-  const base = sleep.avgInBed7d;
-  if (base === null) return null;
+// 今晚该睡多久:地板取"个人近7天在床均值"与"用户目标"里较高的(设了目标就不垫底),
+// 睡眠债按 1/3 偿还(不鼓励一次补爆),昨天练得重再加 20 分钟恢复预算。
+// 用户设了"理想"档时以理想封顶(仍不越过 [5h,12h] 全局安全线)。
+export function computeSleepNeed(
+  sleep: SleepSummary,
+  yesterdayLoad: number,
+  targets: { targetMinutes?: number | null; idealMinutes?: number | null } = {}
+): SleepNeedResult | null {
+  const avg = sleep.avgInBed7d;
+  const target = targets.targetMinutes ?? null;
+  if (avg === null && target === null) return null;
+  const base = avg === null ? target! : target === null ? avg : Math.max(avg, target);
+  const baseSource: "avg7d" | "target" = target !== null && (avg === null || target > avg) ? "target" : "avg7d";
   const debt = sleep.debtMinutes ?? 0;
   const debtComponent = Math.round(clamp(debt, -90, 180) / 3);
   const loadComponent = yesterdayLoad > 250 ? 20 : yesterdayLoad > 100 ? 10 : 0;
-  const minutes = Math.round(clamp(base + debtComponent + loadComponent, 300, 720) / 10) * 10;
-  return { minutes, base: Math.round(base), debtComponent, loadComponent };
+  const hi = Math.min(720, Math.max(300, targets.idealMinutes ?? 720));
+  const minutes = Math.round(clamp(base + debtComponent + loadComponent, 300, hi) / 10) * 10;
+  return { minutes, base: Math.round(base), baseSource, debtComponent, loadComponent };
 }
 
 // ---------- 汇总 ----------

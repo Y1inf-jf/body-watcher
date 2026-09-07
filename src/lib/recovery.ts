@@ -57,8 +57,17 @@ export interface SleepSummary {
   };
   avgInBed7d: number | null;
   avgAsleep7d: number | null; // 近 7 晚(不含昨晚)实际睡眠均值,睡眠债基线
-  debtMinutes: number | null; // 正值 = 欠觉;按近两晚较差一晚计算(见 computeRecoveryFeatures)
+  debtMinutes: number | null; // 正值 = 欠觉;按近两晚最差 vs 参照线计算(见 computeRecoveryFeatures)
+  debtRefMinutes: number | null; // 债务参照线 = max(近7晚均值, 用户最低目标),null=完全无法参照
   deepSharePct: number | null;
+}
+
+// 睡眠三档目标(分钟,null=未设)。定义放这里(算法输入类型),存储层从这儿引。
+// min=睡眠债参照线的硬地板;target=今晚建议的地板;ideal=今晚建议的封顶。
+export interface SleepTargets {
+  minMinutes: number | null;
+  targetMinutes: number | null;
+  idealMinutes: number | null;
 }
 
 export interface RecoveryFeatures {
@@ -70,6 +79,7 @@ export interface RecoveryFeatures {
   respiratoryRate: BaselineFeature;
   spo2Avg: number | null;
   sleep: SleepSummary;
+  targets: SleepTargets; // 回显用户目标,供 UI/LLM 说明口径
   steps7dTotal: number | null;
   note: string;
 }
@@ -152,7 +162,15 @@ function computeBaseline(
   };
 }
 
-export function computeRecoveryFeatures(rowsAsc: GoogleMetricRow[]): RecoveryFeatures {
+export function computeRecoveryFeatures(
+  rowsAsc: GoogleMetricRow[],
+  opts: { sleepTargets?: Partial<SleepTargets> } = {}
+): RecoveryFeatures {
+  const targets: SleepTargets = {
+    minMinutes: opts.sleepTargets?.minMinutes ?? null,
+    targetMinutes: opts.sleepTargets?.targetMinutes ?? null,
+    idealMinutes: opts.sleepTargets?.idealMinutes ?? null,
+  };
   const today = rowsAsc.length > 0 ? rowsAsc[rowsAsc.length - 1] : null;
   // 基线池：除今天外、最近的 21 天样本。
   const pool = rowsAsc.slice(0, -1).slice(-21);
@@ -218,6 +236,15 @@ export function computeRecoveryFeatures(rowsAsc: GoogleMetricRow[]): RecoveryFea
         : Math.min(lastNightAsleep, prevNightAsleep);
   const deep = today?.sleep_deep_minutes != null ? Number(today.sleep_deep_minutes) : null;
 
+  // 债务参照线 = max(近7晚实际睡眠均值, 用户最低目标)。设了 min 目标后:
+  // 冷启动(无均值)也能算债;均值被连日差睡眠拉低时,目标线兜底防止"越缺越正常"。
+  const debtRef =
+    avgAsleep7d === null
+      ? targets.minMinutes
+      : targets.minMinutes === null
+        ? Math.round(avgAsleep7d)
+        : Math.max(Math.round(avgAsleep7d), targets.minMinutes);
+
   const sleep: SleepSummary = {
     lastNight: {
       date: today?.date ?? null,
@@ -233,9 +260,10 @@ export function computeRecoveryFeatures(rowsAsc: GoogleMetricRow[]): RecoveryFea
     avgInBed7d: round1(avgInBed7d),
     avgAsleep7d: round1(avgAsleep7d),
     debtMinutes:
-      avgAsleep7d !== null && worstNightAsleep !== null
-        ? Math.round(avgAsleep7d - worstNightAsleep)
+      debtRef !== null && worstNightAsleep !== null
+        ? Math.round(debtRef - worstNightAsleep)
         : null,
+    debtRefMinutes: debtRef,
     deepSharePct:
       deep !== null && lastNightInBed !== null && lastNightInBed > 0
         ? Math.round((deep / lastNightInBed) * 1000) / 10
@@ -272,6 +300,7 @@ export function computeRecoveryFeatures(rowsAsc: GoogleMetricRow[]): RecoveryFea
     respiratoryRate,
     spo2Avg,
     sleep,
+    targets,
     steps7dTotal: rowsAsc.length ? steps7dTotal : null,
     note: note + staleNote,
   };

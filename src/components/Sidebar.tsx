@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, ClipboardList, RefreshCw, LogOut } from "lucide-react";
+import { LayoutDashboard, ClipboardList, RefreshCw, Settings, LogOut } from "lucide-react";
 
 const links = [
   { href: "/", label: "总览", icon: LayoutDashboard },
@@ -11,6 +11,7 @@ const links = [
   // { href: "/input", label: "数据录入", icon: PencilLine },
   { href: "/plan", label: "训练计划", icon: ClipboardList },
   { href: "/google", label: "数据同步", icon: RefreshCw },
+  { href: "/settings", label: "设置", icon: Settings },
 ];
 
 export default function Sidebar() {

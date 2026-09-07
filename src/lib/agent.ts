@@ -11,6 +11,7 @@ import {
   getCoachNotes,
   getActiveCoachNotes,
   applyCoachNoteOps,
+  getSleepTargets,
   type CoachNoteOp,
 } from "./db";
 import {
@@ -67,7 +68,7 @@ ${notesBlock}
 5. **训练状态**：query_recovery_status 返回 trainingStatus——ACWR 急慢性比（<0.8 欠训练可加量；0.8-1.3 最优区间维持；1.3-1.5 偏高不再加量；>1.5 急性峰值，只做轻松恢复）、form 体力-疲劳（>+5 新鲜可冲；-10~+5 平衡；<-10 疲劳积累应减量）、周负荷/单调性（单调性>2 说明训练内容太单一，建议变换）、睡眠需求推荐。负荷可能由估计 RPE 得出（estimatedSessions>0 时提醒用户在训记里填 RPE 更准）
 6. **今日建议**：query_recovery_status 返回 readiness——恢复分 × 训练负荷合成的练休结论（可以冲/正常练/主动降档/今天休息），与总览页"今日建议"卡同源。给出"今日建议"时结论与它保持一致；用户体感可以更严格（如"正常练"但用户头疼→降为休息），不要比它更宽松
 7. **静息心率**：静息心率较基线升高 5bpm 以上提示恢复不足
-8. **睡眠**：在床时长不足 6 小时、睡眠负债超过 45 分钟、或深睡占比低于 15% 时，避免大重量训练
+8. **睡眠**：在床时长不足 6 小时、睡眠负债超过 45 分钟、或深睡占比低于 15% 时，避免大重量训练。用户设了睡眠目标（recovery.targets：min=债务参照地板、target=今晚建议地板、ideal=建议封顶）时，睡眠债按"目标与历史均值较高者"衡量，引用时说明这个口径
 9. **RPE**：主观疲劳感高（>7）时，选择恢复性训练或休息
 10. **数据优先级**：可穿戴设备数据（query_recovery_status）与手工录入数据并存时，以设备值为准，手工数据作补充
 11. **用户体感优先**：用户对自己身体的当下描述（疼痛、酸胀、精神状态）是第一手信号，与数据结论冲突时明确指出分歧，并以用户体感为准调整建议
@@ -104,7 +105,8 @@ export const agentTools: AgentTools = {
       const rows = queryGoogleDailyMetricsRange(30) as GoogleMetricRow[];
       // 与 dashboard 路由同口径：手动录入补缺 + 今日建议合成,避免卡片和教练各说各话。
       const manual = queryHealthMetrics(30) as Record<string, unknown>[];
-      const recovery = computeRecoveryFeatures(mergeManualHealth(rows, manual));
+      const sleepTargets = getSleepTargets();
+      const recovery = computeRecoveryFeatures(mergeManualHealth(rows, manual), { sleepTargets });
       // 35 天训练窗口覆盖 ACWR 的 28 天慢性池；近 7 天汇总从同一份结果本地切片,
       // 避免再发一次 N+1 查询且与 trainingStatus 的周窗口口径一致。
       const logs = queryTrainingHistoryDetailed(35) as TrainingLogRow[];
@@ -117,7 +119,7 @@ export const agentTools: AgentTools = {
           manualSleepQuality: latestManualSleepQuality(manual),
         }),
         trainingStatus,
-        sleepNeed: computeSleepNeed(recovery.sleep, trainingStatus.yesterdayLoad),
+        sleepNeed: computeSleepNeed(recovery.sleep, trainingStatus.yesterdayLoad, sleepTargets),
         training: summarizeTrainingLoad(logs.filter((l) => l.date >= localDaysAgo(6))),
         muscleRecovery: queryMuscleRecovery(),
         recent: rows.slice(-14),
