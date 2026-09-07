@@ -109,12 +109,12 @@ export default function RecoveryScoreCard({
           />
           <SignalRow
             label="昨晚睡眠"
-            value={fmtDuration(sleep.lastNight.inBedMinutes)}
+            value={fmtDuration(sleep.lastNight.asleepMinutes ?? sleep.lastNight.inBedMinutes)}
             sub={
               debt == null
                 ? "负债未知"
                 : debt > 0
-                  ? `负债 ${fmtDuration(debt)}`
+                  ? `负债 ${fmtDuration(debt)} · 近两晚最差`
                   : debt < 0
                     ? `盈余 ${fmtDuration(-debt)}`
                     : "无负债"

@@ -2,6 +2,7 @@
 // 集中在这里,避免同一分区色在组件里散落成各写各的 hex/类名。
 
 import type { RecoveryZone } from "./recovery";
+import type { ReadinessLevel } from "./readiness";
 import type { AcwrZone, FormZone } from "./training-status";
 
 export interface ZoneMeta {
@@ -99,5 +100,48 @@ export const FORM_ZONE_META: Record<FormZone, ZoneMeta> = {
     border: "border-zone-red/40",
     bg: "bg-zone-red/10",
     hex: "#ff5c5c",
+  },
+};
+
+export const READY_ZONE_META: Record<ReadinessLevel, ZoneMeta> = {
+  go_hard: {
+    label: "可以冲",
+    desc: "恢复好 + 负荷有空间",
+    text: "text-zone-green",
+    border: "border-zone-green/40",
+    bg: "bg-zone-green/10",
+    hex: "#00e08c",
+  },
+  normal: {
+    label: "正常练",
+    desc: "按计划执行",
+    text: "text-accent",
+    border: "border-accent/40",
+    bg: "bg-accent/10",
+    hex: "#22d3ee",
+  },
+  downgrade: {
+    label: "主动降档",
+    desc: "减量减重,别硬撑",
+    text: "text-zone-amber",
+    border: "border-zone-amber/40",
+    bg: "bg-zone-amber/10",
+    hex: "#ffb224",
+  },
+  rest: {
+    label: "今天休息",
+    desc: "恢复或负荷亮红灯",
+    text: "text-zone-red",
+    border: "border-zone-red/40",
+    bg: "bg-zone-red/10",
+    hex: "#ff5c5c",
+  },
+  unknown: {
+    label: "累计中",
+    desc: "数据不足,暂按常规",
+    text: "text-zinc-400",
+    border: "border-white/10",
+    bg: "bg-white/5",
+    hex: "#3f3f46",
   },
 };

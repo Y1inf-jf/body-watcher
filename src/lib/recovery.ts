@@ -47,6 +47,7 @@ export interface SleepSummary {
   lastNight: {
     date: string | null;
     inBedMinutes: number | null;
+    asleepMinutes: number | null; // 实际睡眠 = 在床 − 夜间清醒
     deepMinutes: number | null;
     remMinutes: number | null;
     lightMinutes: number | null;
@@ -55,7 +56,8 @@ export interface SleepSummary {
     wakeup: string | null;
   };
   avgInBed7d: number | null;
-  debtMinutes: number | null; // 正值 = 比近期均值睡得少
+  avgAsleep7d: number | null; // 近 7 晚(不含昨晚)实际睡眠均值,睡眠债基线
+  debtMinutes: number | null; // 正值 = 欠觉;按近两晚较差一晚计算(见 computeRecoveryFeatures)
   deepSharePct: number | null;
 }
 
@@ -195,15 +197,32 @@ export function computeRecoveryFeatures(rowsAsc: GoogleMetricRow[]): RecoveryFea
 
   const inBedOf = (r: GoogleMetricRow): number | null =>
     r.sleep_in_bed_minutes == null ? null : Number(r.sleep_in_bed_minutes);
+  // 实际睡眠按"在床 − 夜间清醒"计:躺 8 小时醒 1.5 小时不该算睡满 8 小时。
+  const asleepOf = (r: GoogleMetricRow): number | null => {
+    const inBed = inBedOf(r);
+    return inBed === null ? null : inBed - Number(r.sleep_awake_minutes ?? 0);
+  };
   const recentInBed = rowsAsc.slice(-8, -1).map(inBedOf).filter((v): v is number => v !== null);
+  const recentAsleep = rowsAsc.slice(-8, -1).map(asleepOf).filter((v): v is number => v !== null);
   const avgInBed7d = mean(recentInBed);
+  const avgAsleep7d = mean(recentAsleep);
   const lastNightInBed = today ? inBedOf(today) : null;
+  const lastNightAsleep = today ? asleepOf(today) : null;
+  // 取近两晚较差一晚计债:连着两晚差睡眠不该被"昨晚碰巧还行"或均值本身被拉低所掩盖。
+  const prevNightAsleep = rowsAsc.length >= 2 ? asleepOf(rowsAsc[rowsAsc.length - 2]) : null;
+  const worstNightAsleep =
+    lastNightAsleep === null
+      ? prevNightAsleep
+      : prevNightAsleep === null
+        ? lastNightAsleep
+        : Math.min(lastNightAsleep, prevNightAsleep);
   const deep = today?.sleep_deep_minutes != null ? Number(today.sleep_deep_minutes) : null;
 
   const sleep: SleepSummary = {
     lastNight: {
       date: today?.date ?? null,
       inBedMinutes: lastNightInBed,
+      asleepMinutes: lastNightAsleep,
       deepMinutes: deep,
       remMinutes: today?.sleep_rem_minutes != null ? Number(today.sleep_rem_minutes) : null,
       lightMinutes: today?.sleep_light_minutes != null ? Number(today.sleep_light_minutes) : null,
@@ -212,9 +231,10 @@ export function computeRecoveryFeatures(rowsAsc: GoogleMetricRow[]): RecoveryFea
       wakeup: (today?.sleep_wakeup as string | undefined) ?? null,
     },
     avgInBed7d: round1(avgInBed7d),
+    avgAsleep7d: round1(avgAsleep7d),
     debtMinutes:
-      avgInBed7d !== null && lastNightInBed !== null
-        ? Math.round(avgInBed7d - lastNightInBed)
+      avgAsleep7d !== null && worstNightAsleep !== null
+        ? Math.round(avgAsleep7d - worstNightAsleep)
         : null,
     deepSharePct:
       deep !== null && lastNightInBed !== null && lastNightInBed > 0

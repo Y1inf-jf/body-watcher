@@ -6,6 +6,7 @@ import { Activity, Dumbbell, FileText } from "lucide-react";
 import TrendChart from "@/components/TrendChart";
 import RecoveryPanel from "@/components/RecoveryPanel";
 import RecoveryScoreCard from "@/components/RecoveryScoreCard";
+import ReadinessCard from "@/components/ReadinessCard";
 import TrainingStatusCard from "@/components/TrainingStatusCard";
 import PlanCard from "@/components/PlanCard";
 import ExerciseProgress from "@/components/ExerciseProgress";
@@ -13,6 +14,7 @@ import TrainingCalendar from "@/components/TrainingCalendar";
 import StatsPanel from "@/components/StatsPanel";
 import WeeklySummary from "@/components/WeeklySummary";
 import type { RecoveryFeatures, RecoveryScore } from "@/lib/recovery";
+import type { Readiness } from "@/lib/readiness";
 import type { SleepNeedResult, TrainingStatus } from "@/lib/training-status";
 
 interface DashboardData {
@@ -22,6 +24,7 @@ interface DashboardData {
   recovery?: { features: RecoveryFeatures; score: RecoveryScore };
   trainingStatus?: TrainingStatus;
   sleepNeed?: SleepNeedResult | null;
+  readiness?: Readiness;
   chartSeries?: {
     date: string;
     hrv: number | null;
@@ -109,6 +112,10 @@ export default function DashboardPage() {
           导出数据
         </a>
       </div>
+
+      {data.readiness && data.recovery && data.trainingStatus && (
+        <ReadinessCard readiness={data.readiness} recovery={data.recovery.score} status={data.trainingStatus} />
+      )}
 
       {data.recovery && (
         <div className="grid gap-4 lg:grid-cols-2">

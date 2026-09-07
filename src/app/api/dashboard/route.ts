@@ -13,6 +13,8 @@ import {
   type TrainingLogRow,
 } from "@/lib/recovery";
 import { computeTrainingStatus, computeSleepNeed } from "@/lib/training-status";
+import { computeReadiness } from "@/lib/readiness";
+import { mergeManualHealth, latestManualSleepQuality } from "@/lib/health-merge";
 
 export async function GET() {
   const healthMetrics = queryHealthMetrics(30);
@@ -21,10 +23,17 @@ export async function GET() {
 
   // 30 天窗口覆盖 21 天基线池 + 当天，供恢复分计算；35 天训练窗口覆盖 ACWR 慢性池。
   const googleRows = queryGoogleDailyMetricsRange(30) as GoogleMetricRow[];
-  const recoveryFeatures = computeRecoveryFeatures(googleRows);
+  // 手动录入补缺:睡眠差/体感这类信号往往是用户先手动记的,冷启动期(基线未就绪)
+  // 靠这些字段也能把恢复侧分档跑起来。口径:同日同字段设备值为 null 时用手动态。
+  const mergedRows = mergeManualHealth(googleRows, healthMetrics as Record<string, unknown>[]);
+  const recoveryFeatures = computeRecoveryFeatures(mergedRows);
   const recoveryScore = computeRecoveryScore(recoveryFeatures);
   const trainingStatus = computeTrainingStatus(queryTrainingHistoryDetailed(35) as TrainingLogRow[]);
   const sleepNeed = computeSleepNeed(recoveryFeatures.sleep, trainingStatus.yesterdayLoad);
+  // 今日建议:恢复(扛不扛得住) × 负荷(练没练多)合成一个行动结论。
+  const readiness = computeReadiness(trainingStatus, recoveryScore, {
+    manualSleepQuality: latestManualSleepQuality(healthMetrics as Record<string, unknown>[]),
+  });
 
   // 趋势图数据:设备指标为主,手动录入补缺(体脂只有手动来源)。日期升序。
   const byDate = new Map<
@@ -82,6 +91,7 @@ export async function GET() {
     recovery: { features: recoveryFeatures, score: recoveryScore },
     trainingStatus,
     sleepNeed,
+    readiness,
     chartSeries,
   });
 }

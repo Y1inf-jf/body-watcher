@@ -1,7 +1,7 @@
 # 恢复与训练状态:算法笔记
 
 > 本文是 body-watcher 全部确定性算法的学习笔记 + 实现说明:每个模型写清楚**出处、公式、直觉、我们的适配和局限**。
-> 代码位置:`src/lib/recovery.ts`(恢复侧)、`src/lib/training-status.ts`(负荷侧)。
+> 代码位置:`src/lib/recovery.ts`(恢复侧)、`src/lib/training-status.ts`(负荷侧)、`src/lib/readiness.ts`(今日建议合成)。
 > 数据流:原始数据(手环/训记)→ 基线与特征 → 确定性算法(本文)→ 仪表盘展示 + LLM 引用解读。
 
 ---
@@ -12,6 +12,7 @@
 |---|---|---|
 | **恢复分 0-100** | "身体从昨天恢复得怎么样?" | HRV、静息心率、睡眠债 |
 | **训练状态(ACWR + Form)** | "最近的训练量和身体能力比,处于什么位置?" | 训练负荷序列 |
+| **今日建议(Readiness)** | "所以今天到底练不练、练多狠?" | 恢复分 × 训练状态合成 |
 | **睡眠需求** | "今晚该睡多久?" | 睡眠均值 + 债务 + 昨日负荷 |
 
 所有指标的共同前提:**和自己的基线比,不和别人比**。
@@ -55,6 +56,7 @@ z_sleep = −(睡眠债分钟数) / 45                    比近7天均值少睡
 
 **设计决策**(与 Whoop 的有意偏离):
 - **睡眠债计入分数**(Whoop 不计):我们要的是"一眼看今天能不能练",昨晚只睡 6 小时却不影响分数不合理。睡眠正常时该项自然为 0,不日常压分
+- **睡眠债口径**(2026-09 修正):`债务 = 近7晚实际睡眠均值 − 近两晚较差一晚`。实际睡眠 = 在床 − 夜间清醒(躺 8 小时醒 1.5 小时不算睡满);取两晚最差而非只看昨晚,因为坏夜晚会把 7 日基线本身拉低,单晚口径下连续差睡眠会被稀释甚至算出"盈余"(真实案例:连着两晚差睡眠,睡眠项反而显示盈余)。设备缺数据时,dashboard 与教练入口会用手动的 sleep_hours/hrv/resting_hr 按日补缺(`src/lib/health-merge.ts`,设备优先)
 - **Φ 映射的含义**:完全等于自己的正常水平 = **50 分**;+1σ ≈ 84;-1σ ≈ 16。所以分数天然是"你历史分布里的百分位"
 - **权重 40/30/30**:HRV 是文献里最强的单一恢复信号;RHR 次之;睡眠债是修正项
 
@@ -179,7 +181,37 @@ strain         = 周总负荷 × 单调性
 
 ---
 
-## 8. 全局局限(读数时记住这些)
+## 8. 今日建议 Readiness(恢复 × 负荷合成)
+
+**出处**:Akiyama et al. 2016(ML 分析 14063 条跑者主客观状态记录:"是否运动"由主观状态/肌肉痛/计划驱动,而"练多狠"主要由睡眠与疲劳驱动)——我们的两层规则是其手工落地。产品动因:训练状态卡对睡眠完全无感,"ACWR 最优"会被读成"今天状态好";恢复与负荷必须合成一条明确的行动结论。
+
+**输入分两路,职责严格分开**:
+
+```
+恢复侧(决定练多重):恢复分 <34 bad / 34-50 low / 50-67 ok / ≥67 good
+负荷侧(决定练不练):ACWR risk→deload / high→hold / under→build / 其余 maintain;
+                   form 疲劳积累时封顶 hold;单调性>2 取消 build
+```
+
+**恢复分未就绪时(冷启动)降级但不弃权**:用分项 z-score(睡眠债/HRV/RHR 任一 ≤−1σ)+ 近两晚内的手动睡眠自评(≤3/10)+ 旗标判断;只认负向证据,无线索默认 ok——宁可不提醒,不能乱喊停。恢复信号陈旧(未同步)同样按"未知→不拦"处理。
+
+**查表合成**(恢复 × 负荷 → 可以冲 / 正常练 / 主动降档 / 今天休息):
+
+| 恢复\负荷 | 有余量(build) | 健康(maintain) | 高位(hold) | 突变(deload) |
+|---|---|---|---|---|
+| good ≥67 | 可以冲 | 正常练 | 正常练(不加量) | 主动降档 |
+| ok 50-67 | 正常练 | 正常练 | 主动降档 | 今天休息 |
+| low 34-50 | 主动降档 | 主动降档 | 主动降档 | 今天休息 |
+| bad <34 | 主动降档 | 主动降档 | 今天休息 | 今天休息 |
+
+要点:负荷侧坏(受伤风险)永远能拦住恢复侧好;恢复侧坏时,加量空间(build)也**不许冲**——恢复偏低还想补量只会把问题滚大。
+训练完全没数据且恢复侧也没信号时返回 `unknown`(数据积累中),不给假结论。
+同一函数喂 dashboard 与教练工具(`query_recovery_status.readiness`),卡片和教练对话不会互相矛盾。
+代码:`src/lib/readiness.ts`,展示元数据 `READY_ZONE_META`。
+
+---
+
+## 9. 全局局限(读数时记住这些)
 
 1. **没有分钟级心率** → 做不了 Whoop 式心血管 Strain(0-21)和真 TRIMP,负荷全靠 sRPE 代理。若日后 Google Health 能拉到心率序列,可以升级
 2. **RPE 全空** → 前期负荷是估计值,ACWR/form 只能看趋势不能抠数值。填 RPE 是当前精度上限的关键
@@ -190,6 +222,7 @@ strain         = 周总负荷 × 单调性
 ## 参考
 
 - Foster, C. et al. (2001). *A new approach to monitoring exercise training.* J Strength Cond Res
+- Foster, C. et al. (1998). *A quantitative approach to training: the training strain index.* J Sports Sci
 - Gabbett, T. J. (2016). *The training—injury prevention paradox.* Br J Sports Med
 - Williams, S. et al. (2017). *How much is too much? (Part 1) The ACWR.* Br J Sports Med
 - Impellizzeri, F. M. et al. (2020). *Acute:Chronic Workload Ratio: Conceptual Issues and Fundamental Pitfalls.* Int J Sports Physiol Perform
@@ -197,3 +230,4 @@ strain         = 周总负荷 × 单调性
 - Banister, E. W. (1991). *Modeling elite athletic performance.* (fitness-fatigue)
 - Whoop 公开方法论(Recovery/Sleep Coach 帮助文档)
 - [OpenStrap/analytics](https://github.com/OpenStrap/analytics) —— 开源的 Whoop 式恢复/strain 实现,可对照
+- Akiyama, H. et al. (2016). *Inferring Exercise Intention and Effort from Subjective Status Records.* IEEE ICCCB (PRISM 2016)
