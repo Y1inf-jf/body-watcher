@@ -2,6 +2,18 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Card, CardTitle } from "@/components/ui/Card";
+import type { UserProfile } from "@/lib/db";
+
+const EMPTY_PROFILE: UserProfile = {
+  goal: "",
+  weeklyDays: null,
+  sessionMinutes: null,
+  equipment: "",
+  schedule: "",
+  diet: "",
+};
+
+const GOAL_OPTIONS = ["增肌", "减脂", "力量", "体态", "健康保持"];
 
 interface SleepTargets {
   minMinutes: number | null;
@@ -79,12 +91,17 @@ export default function SettingsPage() {
   const [testing, setTesting] = useState(false);
   const [llmSaving, setLlmSaving] = useState(false);
 
-  const applyData = useCallback((json: { sleepTargets: SleepTargets; llm: LlmInfo }) => {
+  // 个人画像:目标/频率/时长/器材/作息/饮食,保存后注入教练提示词。
+  const [profile, setProfile] = useState<UserProfile>(EMPTY_PROFILE);
+  const [profileSaving, setProfileSaving] = useState(false);
+
+  const applyData = useCallback((json: { sleepTargets: SleepTargets; profile?: UserProfile; llm: LlmInfo }) => {
     setFields({
       minMinutes: toField(json.sleepTargets.minMinutes),
       targetMinutes: toField(json.sleepTargets.targetMinutes),
       idealMinutes: toField(json.sleepTargets.idealMinutes),
     });
+    setProfile({ ...EMPTY_PROFILE, ...(json.profile ?? {}) });
     setLlm(json.llm);
     setModelInput(json.llm.model);
     setBaseUrlInput(json.llm.baseUrl);
@@ -96,7 +113,7 @@ export default function SettingsPage() {
   const load = useCallback(async () => {
     const res = await fetch("/api/settings");
     if (!res.ok) throw new Error(String(res.status));
-    applyData((await res.json()) as { sleepTargets: SleepTargets; llm: LlmInfo });
+    applyData((await res.json()) as { sleepTargets: SleepTargets; profile?: UserProfile; llm: LlmInfo });
   }, [applyData]);
 
   useEffect(() => {
@@ -155,6 +172,32 @@ export default function SettingsPage() {
       setSaving(false);
     }
   }, [fields]);
+
+  const onSaveProfile = useCallback(
+    async (e: FormEvent) => {
+      e.preventDefault();
+      setBanner(null);
+      setProfileSaving(true);
+      try {
+        const res = await fetch("/api/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ profile }),
+        });
+        const json = (await res.json()) as { error?: string };
+        if (!res.ok) {
+          setBanner({ kind: "err", text: json.error ?? "保存失败" });
+        } else {
+          setBanner({ kind: "ok", text: "已保存，教练对话即刻采用新档案" });
+        }
+      } catch {
+        setBanner({ kind: "err", text: "网络错误，未保存" });
+      } finally {
+        setProfileSaving(false);
+      }
+    },
+    [profile]
+  );
 
   const onSaveLlm = useCallback(async (e: FormEvent) => {
     e.preventDefault();
@@ -266,6 +309,110 @@ export default function SettingsPage() {
               {saving ? "保存中..." : "保存"}
             </button>
             <span className="text-[11px] text-zinc-600">全部留空 = 不设目标，回到纯历史均值口径</span>
+          </div>
+        </form>
+      </Card>
+
+      <Card className="p-5">
+        <CardTitle>Profile · 个人档案</CardTitle>
+        <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+          你的目标与现实约束,每次教练对话都会带上:排课按可练天数/单次时长安排量,器材与饮食约束作为硬边界。
+          留空的项教练不会假设。伤病史、恢复规律这类随时间演进的细节放教练笔记更合适。
+        </p>
+
+        <form onSubmit={onSaveProfile} className="mt-4 space-y-4">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <label className="w-16 shrink-0 text-sm font-medium text-zinc-200" htmlFor="profile-goal">
+              目标
+            </label>
+            <div className="min-w-0 flex-1 basis-48">
+              <input
+                id="profile-goal"
+                list="goal-options"
+                className={TEXT_INPUT_CLS}
+                value={profile.goal}
+                disabled={!loaded}
+                placeholder="增肌 / 减脂 / 力量 / 体态 / 健康保持…"
+                onChange={(e) => setProfile((p) => ({ ...p, goal: e.target.value }))}
+              />
+              <datalist id="goal-options">
+                {GOAL_OPTIONS.map((g) => (
+                  <option key={g} value={g} />
+                ))}
+              </datalist>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <label className="w-16 shrink-0 text-sm font-medium text-zinc-200" htmlFor="profile-days">
+              每周可练
+            </label>
+            <input
+              id="profile-days"
+              type="number"
+              min={1}
+              max={7}
+              inputMode="numeric"
+              placeholder="天数"
+              className={INPUT_CLS}
+              value={profile.weeklyDays ?? ""}
+              disabled={!loaded}
+              onChange={(e) =>
+                setProfile((p) => ({ ...p, weeklyDays: e.target.value === "" ? null : Number(e.target.value) }))
+              }
+            />
+            <div className="min-w-0 flex-1 basis-48 text-[11px] text-zinc-500">一周打算/能练几次(1-7)</div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <label className="w-16 shrink-0 text-sm font-medium text-zinc-200" htmlFor="profile-minutes">
+              单次时长
+            </label>
+            <input
+              id="profile-minutes"
+              type="number"
+              min={10}
+              max={300}
+              inputMode="numeric"
+              placeholder="分钟"
+              className={INPUT_CLS}
+              value={profile.sessionMinutes ?? ""}
+              disabled={!loaded}
+              onChange={(e) =>
+                setProfile((p) => ({ ...p, sessionMinutes: e.target.value === "" ? null : Number(e.target.value) }))
+              }
+            />
+            <div className="min-w-0 flex-1 basis-48 text-[11px] text-zinc-500">每次训练可用时间(10-300 分钟)</div>
+          </div>
+
+          {(
+            [
+              ["equipment", "器材/场地", "如:家里哑铃+弹力带,周末健身房"],
+              ["schedule", "作息/时间窗", "如:工作日只有午休 40 分钟,周末上午有空"],
+              ["diet", "饮食约束", "如:痛风,少海鲜内脏啤酒"],
+            ] as const
+          ).map(([key, label, placeholder]) => (
+            <div key={key} className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <label className="w-16 shrink-0 text-sm font-medium text-zinc-200" htmlFor={`profile-${key}`}>
+                {label}
+              </label>
+              <input
+                id={`profile-${key}`}
+                type="text"
+                className={TEXT_INPUT_CLS}
+                value={profile[key]}
+                disabled={!loaded}
+                placeholder={placeholder}
+                onChange={(e) => setProfile((p) => ({ ...p, [key]: e.target.value }))}
+              />
+            </div>
+          ))}
+
+          <div className="flex items-center gap-3 pt-1">
+            <button type="submit" disabled={!loaded || profileSaving} className={BTN_CLS}>
+              {profileSaving ? "保存中..." : "保存"}
+            </button>
+            <span className="text-[11px] text-zinc-600">全部留空 = 清除档案</span>
           </div>
         </form>
       </Card>

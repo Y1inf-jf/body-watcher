@@ -307,6 +307,59 @@ export function setSleepTargets(targets: SleepTargets): void {
   }
 }
 
+// --- User profile(用户画像档案:目标/可训频率/时长/器材/作息/饮食,注入教练提示词) ---
+
+export interface UserProfile {
+  /** 训练目标:增肌/减脂/力量/健康保持/体态,空=未设 */
+  goal: string;
+  /** 每周可训练天数,空=未设 */
+  weeklyDays: number | null;
+  /** 单次训练可用时长(分钟),空=未设 */
+  sessionMinutes: number | null;
+  /** 器材/场地限制,空=未设 */
+  equipment: string;
+  /** 作息/时间窗(如工作日午休、夜班),空=未设 */
+  schedule: string;
+  /** 饮食约束(忌口/疾病相关),空=未设 */
+  diet: string;
+}
+
+export const USER_PROFILE_KEY = "user_profile";
+
+const EMPTY_PROFILE: UserProfile = {
+  goal: "",
+  weeklyDays: null,
+  sessionMinutes: null,
+  equipment: "",
+  schedule: "",
+  diet: "",
+};
+
+export function getUserProfile(): UserProfile {
+  const raw = getSetting(USER_PROFILE_KEY);
+  if (!raw) return { ...EMPTY_PROFILE };
+  try {
+    const parsed = JSON.parse(raw) as Partial<UserProfile>;
+    return { ...EMPTY_PROFILE, ...parsed };
+  } catch {
+    return { ...EMPTY_PROFILE };
+  }
+}
+
+export function setUserProfile(profile: UserProfile): void {
+  // 只存有效字段;全空则删除设置记录,避免留一坨空 JSON。
+  const meaningful = { ...EMPTY_PROFILE, ...profile };
+  const hasAny =
+    meaningful.goal.trim() !== "" ||
+    meaningful.weeklyDays !== null ||
+    meaningful.sessionMinutes !== null ||
+    meaningful.equipment.trim() !== "" ||
+    meaningful.schedule.trim() !== "" ||
+    meaningful.diet.trim() !== "";
+  if (!hasAny) deleteSetting(USER_PROFILE_KEY);
+  else setSetting(USER_PROFILE_KEY, JSON.stringify(meaningful));
+}
+
 // --- AI(LLM)配置 ---
 // 用户决定:模型/地址/API Key 均可在 /settings 配置(存本表,优先级高于 .env;
 // 清空则回落 env)。Key 属敏感值:任何 GET 接口只回掩码不回明文,见 api/settings。

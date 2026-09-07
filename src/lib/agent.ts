@@ -10,6 +10,7 @@ import {
   saveTrainingPlan,
   savePlanAdvice,
   queryAdviceHistory,
+  getUserProfile,
   getCoachNotes,
   getActiveCoachNotes,
   applyCoachNoteOps,
@@ -43,6 +44,20 @@ function buildCoachSystemPrompt(): string {
           .join("\n")
       : "暂无";
 
+  // 结构化画像:设置页维护的目标与现实约束,排课的量与动作选择以此为硬边界。
+  const p = getUserProfile();
+  const profileLines: string[] = [];
+  if (p.goal.trim()) profileLines.push(`- 训练目标：${p.goal.trim()}`);
+  if (p.weeklyDays) profileLines.push(`- 每周可训练：${p.weeklyDays} 天`);
+  if (p.sessionMinutes) profileLines.push(`- 单次可用时长：约 ${p.sessionMinutes} 分钟`);
+  if (p.equipment.trim()) profileLines.push(`- 器材/场地：${p.equipment.trim()}`);
+  if (p.schedule.trim()) profileLines.push(`- 作息/时间窗：${p.schedule.trim()}`);
+  if (p.diet.trim()) profileLines.push(`- 饮食约束：${p.diet.trim()}`);
+  const profileBlock =
+    profileLines.length > 0
+      ? profileLines.join("\n")
+      : "未填写。不要替用户假设目标或约束；关键信息缺失且影响结论时，直接问一句";
+
   return `你是一位专业的力量训练教练和运动科学顾问，通过多轮对话为用户提供恢复分析和训练计划。
 
 今天是 ${localToday()}。所有涉及具体日期的字段（如 save_training_plan 的 date / plan_date）一律以今天为基准推算，不要猜测日期。
@@ -50,6 +65,10 @@ function buildCoachSystemPrompt(): string {
 ## 用户个人情况（长期笔记，每次对话都生效，必须遵守；[硬约束] 为绝对限制；笔记之间冲突时，以编号较大（较新）的为准）
 
 ${notesBlock}
+
+## 用户目标与现实约束（结构化档案，设置页维护；排课的训练量、频率与动作选择必须遵守）
+
+${profileBlock}
 
 ## 重要规则
 
