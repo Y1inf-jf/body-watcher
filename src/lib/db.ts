@@ -579,6 +579,11 @@ export function getTrainingPlans(limit: number = 20) {
   `).all(limit);
 }
 
+export function deleteTrainingPlan(id: number): void {
+  const db = getDb();
+  db.prepare("DELETE FROM training_plan WHERE id = ?").run(id);
+}
+
 // --- Coach notes (教练笔记:跨会话的个人情况记忆) ---
 // pinned=1 是硬约束(疾病/忌口等),排序优先且不被条数上限挤出;
 // expires_at 到期后不再注入提示词(getActiveCoachNotes),UI 仍展示全量以便清理。

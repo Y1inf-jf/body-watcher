@@ -198,6 +198,7 @@ export default function PlanPage() {
 
   const removeSession = async (id: number) => {
     if (streaming) return;
+    if (!window.confirm("删除这条对话?全部消息将一并移除,不可恢复。")) return;
     await fetch(`/api/chat?id=${id}`, { method: "DELETE" });
     if (id === sessionId) {
       setSessionId(null);
@@ -249,8 +250,8 @@ export default function PlanPage() {
         </button>
       </div>
 
-      {/* 历史会话列表:仅当存在多个会话时展示,回看/切换/删除 */}
-      {sessions.length > 1 && (
+      {/* 历史会话列表:回看/切换/删除。即使只有一条也显示,便于删除。 */}
+      {sessions.length >= 1 && (
         <details className="panel mb-4 p-4" open>
           <summary className="cursor-pointer text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">
             Chat History · 历史对话（{sessions.length}）
@@ -463,6 +464,7 @@ function PlanHistorySection() {
       advice: string;
     }[]
   >([]);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
   useEffect(() => {
     fetch("/api/plans")
@@ -470,6 +472,17 @@ function PlanHistorySection() {
       .then((d) => setPlans(d.plans ?? []))
       .catch(() => {});
   }, []);
+
+  const removePlan = async (id: number) => {
+    if (!window.confirm("删除这条历史计划?不可恢复。")) return;
+    setDeletingId(id);
+    try {
+      await fetch(`/api/plans?id=${id}`, { method: "DELETE" });
+      setPlans((prev) => prev.filter((p) => p.id !== id));
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   if (plans.length === 0) return <p className="text-sm text-zinc-600">暂无训练计划</p>;
 
@@ -488,7 +501,22 @@ function PlanHistorySection() {
                 {plan.date}
                 {plan.plan_date && <span className="ml-2 text-xs text-zinc-500">目标: {plan.plan_date}</span>}
               </span>
-              <span className="text-xs text-zinc-500">{exercises.length} 个动作</span>
+              <span className="flex items-center gap-2">
+                <span className="text-xs text-zinc-500">{exercises.length} 个动作</span>
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    removePlan(plan.id);
+                  }}
+                  disabled={deletingId === plan.id}
+                  className="text-zinc-600 transition-colors hover:text-zone-red disabled:opacity-40"
+                  aria-label="删除该计划"
+                  title="删除该计划"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </span>
             </summary>
             <div className="mt-3 space-y-3">
               <div className="border-l-2 border-accent/70 pl-3">
