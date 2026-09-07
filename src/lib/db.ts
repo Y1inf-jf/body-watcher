@@ -90,8 +90,16 @@ function createTables(db: Database.Database) {
       created_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
 
+    CREATE TABLE IF NOT EXISTS chat_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
     CREATE TABLE IF NOT EXISTS chat_messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id INTEGER,
       role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
       content TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now', 'localtime'))
@@ -204,6 +212,27 @@ function migrate(db: Database.Database) {
   if (!noteCols.find((c) => c.name === "expires_at")) {
     db.exec("ALTER TABLE coach_notes ADD COLUMN expires_at TEXT");
   }
+  // 聊天多会话:老库补 session_id 列,并把存量消息整体收进一条「历史对话」。
+  const chatCols = db.prepare("PRAGMA table_info(chat_messages)").all() as { name: string }[];
+  if (!chatCols.find((c) => c.name === "session_id")) {
+    db.exec("ALTER TABLE chat_messages ADD COLUMN session_id INTEGER");
+  }
+  const orphans = db
+    .prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE session_id IS NULL")
+    .get() as { n: number };
+  if (orphans.n > 0) {
+    // 事务保证"建会话"与"归桶"要么都成要么都不成;重跑时已无孤儿行,天然幂等。
+    db.transaction(() => {
+      const { lastInsertRowid } = db
+        .prepare("INSERT INTO chat_sessions (title) VALUES ('历史对话')")
+        .run();
+      db.prepare("UPDATE chat_messages SET session_id = ? WHERE session_id IS NULL").run(
+        lastInsertRowid
+      );
+    })();
+  }
+  // 索引放在迁移之后建:老库里 session_id 列是 ALTER 补的,SCHEMA 阶段建索引会直接报错。
+  db.exec("CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id)");
 }
 
 // --- App settings（用户可调参数，KV 存储） ---
@@ -440,7 +469,7 @@ export function queryBodyComposition(days: number) {
   `).all(days);
 }
 
-// --- Chat history (教练对话持久化) ---
+// --- Chat history (教练对话持久化,按会话分桶) ---
 
 export interface ChatMessageRow {
   id: number;
@@ -449,18 +478,79 @@ export interface ChatMessageRow {
   created_at: string;
 }
 
-// 单用户站:不做会话分桶,取最近 limit 条按时间正序返回,前端续聊即无缝接上。
-export function getRecentChatMessages(limit: number = 60): ChatMessageRow[] {
-  const db = getDb();
-  const rows = db
-    .prepare("SELECT id, role, content, created_at FROM (SELECT * FROM chat_messages ORDER BY id DESC LIMIT ?) ORDER BY id ASC")
-    .all(limit) as ChatMessageRow[];
-  return rows;
+export interface ChatSessionRow {
+  id: number;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
 }
 
-export function insertChatMessage(role: "user" | "assistant", content: string): void {
+export function createChatSession(title: string | null = null): { id: number; title: string | null } {
   const db = getDb();
-  db.prepare("INSERT INTO chat_messages (role, content) VALUES (?, ?)").run(role, content);
+  const { lastInsertRowid } = db
+    .prepare("INSERT INTO chat_sessions (title) VALUES (?)")
+    .run(title);
+  return { id: Number(lastInsertRowid), title };
+}
+
+export function listChatSessions(): ChatSessionRow[] {
+  const db = getDb();
+  return db
+    .prepare(
+      `SELECT s.id, s.title, s.created_at, s.updated_at,
+              COUNT(m.id) AS message_count
+         FROM chat_sessions s
+         LEFT JOIN chat_messages m ON m.session_id = s.id
+        GROUP BY s.id
+        ORDER BY s.updated_at DESC, s.id DESC`
+    )
+    .all() as ChatSessionRow[];
+}
+
+// 取会话最近 limit 条消息,时间正序返回。
+export function getChatMessages(sessionId: number, limit: number = 60): ChatMessageRow[] {
+  const db = getDb();
+  return db
+    .prepare(
+      "SELECT id, role, content, created_at FROM (SELECT * FROM chat_messages WHERE session_id = ? ORDER BY id DESC LIMIT ?) ORDER BY id ASC"
+    )
+    .all(sessionId, limit) as ChatMessageRow[];
+}
+
+export function insertChatMessage(
+  sessionId: number,
+  role: "user" | "assistant",
+  content: string
+): void {
+  const db = getDb();
+  db.transaction(() => {
+    db.prepare("INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)").run(
+      sessionId,
+      role,
+      content
+    );
+    db.prepare(
+      "UPDATE chat_sessions SET updated_at = datetime('now', 'localtime') WHERE id = ?"
+    ).run(sessionId);
+    // 无名会话以首条用户消息定标题:取第一行、截 24 字,列表里一眼可辨。
+    if (role === "user") {
+      const firstLine = content.split("\n")[0]?.trim().slice(0, 24) ?? "";
+      if (firstLine) {
+        db.prepare(
+          "UPDATE chat_sessions SET title = ? WHERE id = ? AND (title IS NULL OR title = '')"
+        ).run(firstLine, sessionId);
+      }
+    }
+  })();
+}
+
+export function deleteChatSession(id: number): void {
+  const db = getDb();
+  db.transaction(() => {
+    db.prepare("DELETE FROM chat_messages WHERE session_id = ?").run(id);
+    db.prepare("DELETE FROM chat_sessions WHERE id = ?").run(id);
+  })();
 }
 
 // --- Training plan ---

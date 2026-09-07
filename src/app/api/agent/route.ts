@@ -1,5 +1,5 @@
 import { createCoachStream, consolidateCoachNotes, createSummaryStream } from "@/lib/agent";
-import { insertChatMessage } from "@/lib/db";
+import { createChatSession, insertChatMessage } from "@/lib/db";
 import { runSync } from "@/lib/google/sync";
 import { NextRequest, NextResponse } from "next/server";
 import type { ModelMessage } from "ai";
@@ -53,16 +53,21 @@ function withStreamTap(stream: ReadableStream<Uint8Array>, onDone: (assistantTex
 export async function POST(req: NextRequest) {
   const mode = new URL(req.url).searchParams.get("mode");
 
-  // 请求体可带对话历史(多轮追问);旧的无 body 调用视为单轮。
+  // 请求体可带对话历史(多轮追问)与 sessionId;旧的无 body 调用视为单轮。
   let history: ModelMessage[] | null = null;
+  let sessionId: number | null = null;
   try {
     const body = await req.json();
     history = sanitizeMessages(body?.messages);
+    const sid = Number(body?.sessionId);
+    sessionId = Number.isInteger(sid) && sid > 0 ? sid : null;
   } catch {
     // 无 body 或非 JSON → 单轮模式
   }
 
   let stream: ReadableStream<Uint8Array>;
+  // 本轮落库归属的会话 id,经响应头 X-Chat-Session 回传(前端首发新会话时据此同步)。
+  let persistSessionId: number | null = null;
   try {
     if (mode === "summary") {
       stream = await createSummaryStream(req.signal);
@@ -70,15 +75,17 @@ export async function POST(req: NextRequest) {
       // 对话首轮先同步一次设备数据,保证分析基于昨晚最新数据;追问轮不再重复同步。
       if (history.length === 1) await runSync().catch(() => {});
       const coachStream = await createCoachStream(history, req.signal);
-      // 流结束后异步做两件事:持久化本轮问答(前端刷新可恢复),整理长期记忆。
+      // 流结束后异步做两件事:持久化本轮问答到会话(前端刷新可恢复),整理长期记忆。
       // 客户端每轮都带全量历史,这里只落库最后一条 user + 新回复,避免重复。
+      // 前端没带有效 sessionId(新对话首发)时服务端就地建会话,标题由首条用户消息生成。
+      persistSessionId = sessionId ?? createChatSession().id;
       const lastUser = [...history].reverse().find((m) => m.role === "user");
       const lastUserText = lastUser && typeof lastUser.content === "string" ? lastUser.content : "";
       stream = withStreamTap(coachStream, (reply) => {
         if (!reply.trim()) return;
         try {
-          if (lastUserText) insertChatMessage("user", lastUserText);
-          insertChatMessage("assistant", reply);
+          if (lastUserText) insertChatMessage(persistSessionId!, "user", lastUserText);
+          insertChatMessage(persistSessionId!, "assistant", reply);
         } catch (e) {
           console.warn("[chat] persist failed:", (e as Error).message);
         }
@@ -100,6 +107,7 @@ export async function POST(req: NextRequest) {
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "no-cache",
+      ...(persistSessionId ? { "X-Chat-Session": String(persistSessionId) } : {}),
     },
   });
 }

@@ -1,12 +1,20 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Send, Square, Plus, Trash2, Pin, ClipboardList, HeartPulse } from "lucide-react";
+import { Send, Square, Plus, Trash2, Pin, ClipboardList, HeartPulse, MessageSquarePlus } from "lucide-react";
 import Markdown from "@/components/Markdown";
 
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+}
+
+interface ChatSession {
+  id: number;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
 }
 
 interface CoachNote {
@@ -25,8 +33,18 @@ const todayStr = () => {
 // expires_at 是"有效期至",当天仍有效、次日过期(与注入侧 SQL 的 expires_at > now 口径一致)。
 const isExpired = (date: string | null) => date !== null && date < todayStr();
 
+// 会话列表右侧时间标签:当天只显时间,跨年带年份。
+const sessionLabel = (s: ChatSession) => {
+  const d = s.updated_at.slice(0, 10);
+  const hm = s.updated_at.slice(11, 16);
+  if (d === todayStr()) return `今天 ${hm}`;
+  return d.slice(0, 5) === todayStr().slice(0, 5) ? d.slice(5) : d;
+};
+
 export default function PlanPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [sessionId, setSessionId] = useState<number | null>(null);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [input, setInput] = useState("");
   const [notes, setNotes] = useState<CoachNote[]>([]);
@@ -35,6 +53,11 @@ export default function PlanPage() {
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  // send 闭包拿不到最新 sessionId,用 ref 同步兜底建会话后的响应头值。
+  const sessionIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
 
   const fetchNotes = useCallback(() => {
     fetch("/api/coach-notes")
@@ -43,10 +66,16 @@ export default function PlanPage() {
       .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    fetchNotes();
-    // 恢复上次对话:消息已持久化在服务端,刷新/换设备不丢
+  const fetchSessions = useCallback(() => {
     fetch("/api/chat")
+      .then((r) => r.json())
+      // 0 消息的会话只在"建会话后生成失败"时残留,不展示。
+      .then((d) => setSessions((d.sessions ?? []).filter((s: ChatSession) => s.message_count > 0)))
+      .catch(() => {});
+  }, []);
+
+  const openSession = useCallback((id: number) => {
+    fetch(`/api/chat?sessionId=${id}`)
       .then((r) => r.json())
       .then((d) => {
         if (Array.isArray(d.messages)) {
@@ -58,9 +87,25 @@ export default function PlanPage() {
           );
         }
       })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetchNotes();
+    // 恢复会话列表,默认打开最近更新的一条;消息已持久化,刷新/换设备不丢。
+    fetch("/api/chat")
+      .then((r) => r.json())
+      .then((d) => {
+        const list: ChatSession[] = (d.sessions ?? []).filter((s: ChatSession) => s.message_count > 0);
+        setSessions(list);
+        if (list.length > 0) {
+          setSessionId(list[0].id);
+          openSession(list[0].id);
+        }
+      })
       .catch(() => {})
       .finally(() => setHistoryLoaded(true));
-  }, [fetchNotes]);
+  }, [fetchNotes, openSession]);
 
   // 新消息/流式输出时滚到底部。
   useEffect(() => {
@@ -88,13 +133,22 @@ export default function PlanPage() {
         const res = await fetch("/api/agent", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: history }),
+          body: JSON.stringify({
+            messages: history,
+            ...(sessionIdRef.current ? { sessionId: sessionIdRef.current } : {}),
+          }),
           signal: abortRef.current.signal,
         });
         if (!res.ok) {
           const j = await res.json().catch(() => null);
           patchLast({ content: `[生成失败：${j?.error ?? res.status}]` });
           return;
+        }
+        // 新对话首发:服务端建了会话,经响应头拿回 id。
+        const sid = Number(res.headers.get("X-Chat-Session"));
+        if (Number.isInteger(sid) && sid > 0 && sessionIdRef.current !== sid) {
+          sessionIdRef.current = sid;
+          setSessionId(sid);
         }
         const reader = res.body?.getReader();
         const decoder = new TextDecoder();
@@ -110,9 +164,13 @@ export default function PlanPage() {
             return copy;
           });
         }
-        // 对话结束后刷新一次笔记;后台记忆整理稍晚落库,延迟几秒再刷一次。
+        // 对话结束后刷新笔记与会话列表;后台记忆整理/落库稍晚,延迟几秒再刷一次。
         fetchNotes();
-        setTimeout(fetchNotes, 6000);
+        fetchSessions();
+        setTimeout(() => {
+          fetchNotes();
+          fetchSessions();
+        }, 6000);
       } catch (e) {
         if ((e as Error).name !== "AbortError") {
           patchLast({ content: "[生成失败,请重试]" });
@@ -121,8 +179,33 @@ export default function PlanPage() {
         setStreaming(false);
       }
     },
-    [messages, streaming, fetchNotes]
+    [messages, streaming, fetchNotes, fetchSessions]
   );
+
+  // 新建对话:不立刻建会话,首条消息发出时由服务端落库,避免空会话堆积。
+  const newChat = () => {
+    if (streaming) return;
+    setSessionId(null);
+    sessionIdRef.current = null;
+    setMessages([]);
+  };
+
+  const switchSession = (id: number) => {
+    if (streaming || id === sessionId) return;
+    setSessionId(id);
+    openSession(id);
+  };
+
+  const removeSession = async (id: number) => {
+    if (streaming) return;
+    await fetch(`/api/chat?id=${id}`, { method: "DELETE" });
+    if (id === sessionId) {
+      setSessionId(null);
+      sessionIdRef.current = null;
+      setMessages([]);
+    }
+    fetchSessions();
+  };
 
   const addNote = async () => {
     const content = noteInput.trim();
@@ -157,7 +240,55 @@ export default function PlanPage() {
     <div className="flex max-w-4xl flex-col">
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-xl font-bold">训练计划 · AI 教练</h2>
+        <button
+          onClick={newChat}
+          disabled={streaming}
+          className="flex items-center gap-1.5 rounded-lg border border-accent/30 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/20 disabled:opacity-40"
+        >
+          <MessageSquarePlus size={14} /> 新建对话
+        </button>
       </div>
+
+      {/* 历史会话列表:仅当存在多个会话时展示,回看/切换/删除 */}
+      {sessions.length > 1 && (
+        <details className="panel mb-4 p-4" open>
+          <summary className="cursor-pointer text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">
+            Chat History · 历史对话（{sessions.length}）
+          </summary>
+          <div className="mt-3 space-y-1.5">
+            {sessions.map((s) => (
+              <div
+                key={s.id}
+                className={`flex items-center justify-between gap-3 rounded border px-2.5 py-1.5 ${
+                  s.id === sessionId ? "border-accent/40 bg-accent/[0.06]" : "border-white/5 bg-white/[0.02]"
+                }`}
+              >
+                <button
+                  onClick={() => switchSession(s.id)}
+                  disabled={streaming}
+                  className="min-w-0 flex-1 truncate text-left text-sm text-zinc-300 transition-colors hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {s.id === sessionId && <span className="mr-1.5 text-accent">▸</span>}
+                  {s.title || "未命名对话"}
+                </button>
+                <span className="flex shrink-0 items-center gap-2">
+                  <span className="text-[10px] text-zinc-600">
+                    {sessionLabel(s)} · {s.message_count} 条
+                  </span>
+                  <button
+                    onClick={() => removeSession(s.id)}
+                    disabled={streaming}
+                    className="text-zinc-600 transition-colors hover:text-zone-red disabled:opacity-40"
+                    aria-label="删除该对话"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
 
       {/* 教练笔记:长期记忆层,Agent 对话中也会自动写入 */}
       <details className="panel mb-4 p-4" open={notes.length > 0}>
@@ -282,8 +413,8 @@ export default function PlanPage() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && send(input)}
-          disabled={streaming || empty}
-          placeholder={empty ? "先从上面的按钮开始对话" : "追问/修正,如:胸没恢复今天别排胸"}
+          disabled={streaming}
+          placeholder={empty ? "直接输入,或用上面的快捷按钮开始" : "追问/修正,如:胸没恢复今天别排胸"}
           className="flex-1 rounded-lg border border-white/10 bg-white/[0.04] px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none disabled:opacity-50"
         />
         {streaming ? (
@@ -296,7 +427,7 @@ export default function PlanPage() {
         ) : (
           <button
             onClick={() => send(input)}
-            disabled={!input.trim() || empty}
+            disabled={!input.trim() || streaming}
             className="flex items-center gap-1.5 rounded-lg bg-accent/90 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-40"
           >
             <Send size={14} /> 发送
