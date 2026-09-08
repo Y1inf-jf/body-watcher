@@ -170,7 +170,7 @@ export default function PlanPage() {
             return copy;
           });
         }
-        // 对话结束后:先等会话列表刷新,让草稿卡无闪烁交棒给真实会话条目;
+        // 对话结束后:先等会话列表刷新,草稿卡无闪烁交棒给"当前对话面板";
         // 后台记忆整理稍晚落库,笔记延迟几秒再刷一次。
         await fetchSessions();
         setComposing(false);
@@ -201,7 +201,7 @@ export default function PlanPage() {
     setComposing(true);
   };
 
-  // 列表条目点击 = 就地展开/收起该会话(与草稿卡互斥,同屏只开一个)。
+  // 历史条目点击 = 在上方面板展开该会话(已展开时点击则收起;与草稿卡互斥)。
   const toggleSession = (id: number) => {
     if (streaming) return;
     setComposing(false);
@@ -250,6 +250,8 @@ export default function PlanPage() {
 
   // 草稿卡展示条件:正在新建,或尚无任何会话(首次引导)。
   const showComposer = composing || (historyLoaded && sessions.length === 0);
+  // 当前展开的历史会话(列表里对应条目,取标题用)。
+  const activeSession = sessions.find((s) => s.id === sessionId);
 
   return (
     <div className="flex max-w-4xl flex-col">
@@ -348,7 +350,7 @@ export default function PlanPage() {
         </div>
       </details>
 
-      {/* 会话列表即对话:每条是可展开的卡片,展开后就地显示消息流与追问输入 */}
+      {/* 对话区:当前对话独占一块面板(草稿或历史会话),其余收进下方折叠区 */}
       <div className="space-y-2">
         {/* 无会话时的引导卡:快捷起头 */}
         {historyLoaded && sessions.length === 0 && (
@@ -376,34 +378,57 @@ export default function PlanPage() {
           </div>
         )}
 
-        {/* 新对话草稿卡:首条消息发出即建会话,流结束后由列表真条目接管。
-            草稿展示期没有任何会话展开,故非空的 messages 必为本次新会话,就地流式显示。 */}
-        {showComposer && (
+        {/* 当前对话面板:新会话草稿,或从历史点开的会话;收起即回到纯列表 */}
+        {showComposer ? (
           <div className="panel p-4">
             <div className="mb-2 text-xs font-medium text-accent">新对话（未保存,发送后创建）</div>
             {messages.length > 0 && <div className="mb-3 space-y-3">{renderMessages()}</div>}
             {renderInput("输入第一条消息,开始新对话")}
           </div>
-        )}
+        ) : sessionId !== null ? (
+          <div className="panel p-4">
+            <div className="mb-3 flex items-center justify-between gap-3 border-b border-white/5 pb-2.5">
+              <span className="min-w-0 truncate text-sm font-medium text-zinc-200">
+                {activeSession?.title || "未命名对话"}
+              </span>
+              <button
+                onClick={closeConversation}
+                disabled={streaming}
+                className="shrink-0 rounded border border-white/10 px-2 py-0.5 text-[11px] text-zinc-400 transition-colors hover:text-zinc-200 disabled:opacity-40"
+              >
+                收起
+              </button>
+            </div>
+            <div className="space-y-3">{renderMessages()}</div>
+            <div className="mt-3">{renderInput("追问/修正,如:胸没恢复今天别排胸")}</div>
+          </div>
+        ) : null}
 
-        {/* 会话卡片 */}
-        {sessions.map((s) => {
-          const expanded = s.id === sessionId && !showComposer;
-          return (
-            <div
-              key={s.id}
-              className={`rounded-lg border p-3 transition-colors ${
-                expanded ? "border-accent/40 bg-accent/[0.04]" : "border-white/5 bg-white/[0.02]"
-              }`}
-            >
-              <div className="flex items-center justify-between gap-3">
+        {/* 历史对话收纳:默认收起,点条目在上方面板就地展开 */}
+        <details className="panel p-4">
+          <summary className="cursor-pointer text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">
+            Chat History · 历史对话（{sessions.length}）
+          </summary>
+          <div className="mt-3 space-y-1.5">
+            {sessions.length === 0 && <p className="text-xs text-zinc-600">暂无历史对话</p>}
+            {sessions.map((s) => (
+              <div
+                key={s.id}
+                className={`flex items-center justify-between gap-3 rounded border px-2.5 py-1.5 transition-colors ${
+                  s.id === sessionId && !showComposer
+                    ? "border-accent/40 bg-accent/[0.06]"
+                    : "border-white/5 bg-white/[0.02]"
+                }`}
+              >
                 <button
                   onClick={() => toggleSession(s.id)}
                   disabled={streaming}
-                  title={expanded ? "点击收起该对话" : "就地展开该对话"}
+                  title={s.id === sessionId && !showComposer ? "点击收起该对话" : "在上方展开该对话"}
                   className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-sm text-zinc-200 transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {expanded ? <Check size={13} className="shrink-0 text-accent" /> : null}
+                  {s.id === sessionId && !showComposer ? (
+                    <Check size={13} className="shrink-0 text-accent" />
+                  ) : null}
                   <span className="truncate">{s.title || "未命名对话"}</span>
                 </button>
                 <span className="flex shrink-0 items-center gap-2">
@@ -420,15 +445,9 @@ export default function PlanPage() {
                   </button>
                 </span>
               </div>
-              {expanded && (
-                <div className="mt-3 space-y-3 border-t border-white/5 pt-3">
-                  {renderMessages()}
-                  {renderInput("追问/修正,如:胸没恢复今天别排胸")}
-                </div>
-              )}
-            </div>
-          );
-        })}
+            ))}
+          </div>
+        </details>
       </div>
     </div>
   );
