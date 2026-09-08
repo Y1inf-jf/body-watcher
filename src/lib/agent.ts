@@ -95,6 +95,7 @@ ${profileBlock}
 
 - 工具返回的数据就是用户的实际数据，直接使用即可，不要说"数据不可用"或"无法获取"
 - 如果某个工具返回空数组，说明用户还没有该类型的数据，此时基于已有数据进行分析
+- **动作与重量必须锚定历史**：排课选动作优先用用户实际练过的动作（query_recovery_status 的 exerciseBaseline 给出每个动作最近一次的组数与最强一组；更早的组间明细用 query_training_history 查）。重量以该动作上次实际表现为基准做渐进超负荷（+2.5%~5% 重量，或同重量 +1~2 次），不要凭空估计。引入用户没练过的新动作必须说明理由（器材限制、避开伤病部位、补短板等）
 - 不要反复调用同一个工具，调用一次即可
 - 用户对分析或计划提出异议时（如体感不符、想换动作、时间不够），认真对待：必要时重新查询数据，然后直接给出修正后的结论
 - 修改训练计划后必须重新调用 save_training_plan 保存新版本；一次回复里只保存一次，不要连环保存
@@ -103,7 +104,7 @@ ${profileBlock}
 
 ## 核心原则
 
-1. **渐进超负荷**：训练量应随时间逐步增加，但不盲目加量
+1. **渐进超负荷**：训练量应随时间逐步增加，但不盲目加量；增量以 exerciseBaseline/训练历史里该动作的上次实际重量为基准，而非凭空估计
 2. **肌群恢复**：力量训练后肌群需要 48-72 小时恢复，间隔不足则跳过该肌群（用户笔记另有说明时以笔记为准）
 3. **HRV 信号**：可穿戴设备的 HRV rMSSD z-score ≤ -1，或较基线下降超过 10%，提示身体压力较大，应降低训练强度；基线未就绪时按原始值趋势判断
 4. **恢复分**：query_recovery_status 会返回综合恢复分（0-100，50=自己的正常水平）。红色（<34）当天只安排轻松恢复活动；黄色（34-66）正常训练但不冲 PR；绿色（>=67）可上强度。分数为 null 时按 HRV/静息心率/睡眠分项信号判断，并说明基线累计进度
@@ -119,7 +120,7 @@ ${profileBlock}
 ## 工作流程
 
 - **恢复分析类请求**：先调用 query_recovery_status 获取恢复分、设备信号与训练负荷，再调用 query_advice_history 查看近期建议与你回填的采纳情况/体感，需要时补充肌群恢复查询；输出结构：今日恢复分与色带 → 昨晚睡眠 → 自主神经信号 → 训练负荷状态 → 今日建议（强度定位、练什么、1-2 条注意点）
-- **排课请求**：query_recovery_status → query_advice_history → 查询各肌群恢复状态与近期训练历史 → 综合分析后生成训练计划，调用 save_training_plan 保存
+- **排课请求**：query_recovery_status（含 exerciseBaseline 动作基线）→ query_advice_history → 需要看组间明细或更早趋势时补 query_training_history（days=30）→ 综合分析后生成训练计划，动作与重量按"锚定历史"规则取值，调用 save_training_plan 保存
 
 ## 计划保存格式
 
@@ -136,12 +137,74 @@ save_training_plan 包含：
 请使用中文回复，分析类输出用小标题分段。`;
 }
 
+// 动作基线:排课时动作选择与重量的锚点。从逐组明细聚合,每个动作取
+// 最近一次训练的总组数与最强一组(最大重量那组;无负重记自重)。
+// 教练据此做渐进超负荷,而不是凭空估计重量、发明没练过的动作。
+export interface ExerciseBaselineEntry {
+  name: string;
+  muscle_group: string;
+  last_date: string;
+  sets: number;
+  top_set: string;
+}
+
+export function buildExerciseBaseline(logs: TrainingLogRow[]): ExerciseBaselineEntry[] {
+  interface Accum {
+    muscle: string;
+    lastDate: string;
+    rows: { sets: number; reps: number; weight: number; bodyweight: boolean }[];
+  }
+  const perName = new Map<string, Accum>();
+  for (const log of logs) {
+    // logs 按 date 倒序:某动作首次出现即最近一次训练,更早的场次不回溯。
+    for (const ex of log.exercises ?? []) {
+      const name = String(ex.exercise_name ?? "").trim();
+      if (!name) continue;
+      const row = {
+        sets: Number(ex.sets ?? 1) || 1,
+        reps: Number(ex.reps ?? 0),
+        weight: Number(ex.weight ?? 0),
+        bodyweight: ex.bodyweight === 1 || ex.bodyweight === true,
+      };
+      const cur = perName.get(name);
+      if (!cur) {
+        perName.set(name, {
+          muscle: String(ex.muscle_group ?? "未分类"),
+          lastDate: log.date,
+          rows: [row],
+        });
+      } else if (log.date === cur.lastDate) {
+        cur.rows.push(row);
+      }
+    }
+  }
+  const entries: ExerciseBaselineEntry[] = [];
+  for (const [name, a] of perName) {
+    const totalSets = a.rows.reduce((s, r) => s + r.sets, 0);
+    const loaded = a.rows.filter((r) => r.weight > 0).sort((x, y) => y.weight - x.weight);
+    const top = loaded[0] ?? a.rows.slice().sort((x, y) => y.reps - x.reps)[0];
+    if (!top) continue;
+    const topSet =
+      top.weight > 0 ? `${top.reps}次×${top.weight}kg` : top.bodyweight ? `${top.reps}次×自重` : `${top.reps}次`;
+    entries.push({
+      name,
+      muscle_group: a.muscle,
+      last_date: a.lastDate,
+      sets: totalSets,
+      top_set: topSet,
+    });
+  }
+  return entries.sort(
+    (x, y) => x.muscle_group.localeCompare(y.muscle_group) || y.last_date.localeCompare(x.last_date)
+  );
+}
+
 // 工具集：每个工具的入参经 Zod 校验后才进入 execute，
 // 杜绝旧实现里 JSON.parse 后直接喂给 DB 写入的校验缺失问题。
 export const agentTools: AgentTools = {
   query_recovery_status: tool({
     description:
-      "查询可穿戴设备恢复信号与训练状态：今日恢复分（0-100 及红/黄/绿档位）、HRV/静息心率相对基线的偏离（z-score）、昨晚睡眠各阶段与睡眠负债与今晚睡眠需求推荐、ACWR 急慢性负荷比与训练状态分区、form 体力-疲劳、周负荷/单调性/strain、近 7 天训练负荷汇总、近 14 天设备指标明细、readiness（与总览页同源的今日建议合成结论）",
+      "查询可穿戴设备恢复信号与训练状态：今日恢复分（0-100 及红/黄/绿档位）、HRV/静息心率相对基线的偏离（z-score）、昨晚睡眠各阶段与睡眠负债与今晚睡眠需求推荐、ACWR 急慢性负荷比与训练状态分区、form 体力-疲劳、周负荷/单调性/strain、近 7 天训练负荷汇总、各肌群恢复状态、exerciseBaseline（每个动作最近一次的实际组数与最强一组，排课时动作选择与重量的锚点）、近 14 天设备指标明细、readiness（与总览页同源的今日建议合成结论）",
     inputSchema: z.object({}),
     execute: async () => {
       // 30 天窗口：覆盖 21 天基线池 + 当天；明细只回传最近 14 天控制 payload。
@@ -165,6 +228,9 @@ export const agentTools: AgentTools = {
         sleepNeed: computeSleepNeed(recovery.sleep, trainingStatus.yesterdayLoad, sleepTargets),
         training: summarizeTrainingLoad(logs.filter((l) => l.date >= localDaysAgo(6))),
         muscleRecovery: queryMuscleRecovery(),
+        // 动作级基线随首次查询直接带回:即使不再调 query_training_history,
+        // 排课也能拿到"上次实际重量"这个渐进超负荷的基准。
+        exerciseBaseline: buildExerciseBaseline(logs),
         recent: rows.slice(-14),
       };
     },

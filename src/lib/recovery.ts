@@ -23,6 +23,7 @@ export interface TrainingLogRow {
   duration?: number | null;
   rpe?: number | null;
   exercises?: {
+    exercise_name?: string | null;
     muscle_group?: string | null;
     sets?: number | null;
     reps?: number | null;
