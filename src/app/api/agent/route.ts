@@ -25,15 +25,19 @@ function sanitizeMessages(raw: unknown): ModelMessage[] | null {
   return messages.slice(-40);
 }
 
-// 包装流:文本原样透传给前端,同时累积助手回复;流正常结束或被取消后触发回调。
-// 用于在对话结束后触发后台记忆整理(不 await,不阻塞响应)。
-function withStreamTap(stream: ReadableStream<Uint8Array>, onDone: (assistantText: string) => void) {
+// 包装流:文本原样透传给前端,同时累积助手回复;流正常结束或被取消后触发回调
+// (cancelled 标记区分两者)。用于在对话结束后触发后台记忆整理(不 await,不阻塞响应)。
+function withStreamTap(
+  stream: ReadableStream<Uint8Array>,
+  onDone: (assistantText: string, cancelled: boolean) => void
+) {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let text = "";
+  let cancelled = false;
   const finish = () => {
     try {
-      onDone(text);
+      onDone(text, cancelled);
     } catch {
       // 回调自身的错误不能影响响应
     }
@@ -50,6 +54,7 @@ function withStreamTap(stream: ReadableStream<Uint8Array>, onDone: (assistantTex
       controller.enqueue(value);
     },
     async cancel(reason) {
+      cancelled = true;
       finish();
       return reader.cancel(reason);
     },
@@ -80,9 +85,10 @@ export async function POST(req: NextRequest) {
     } else if (mode === "monthly") {
       // 阶段复盘:流式输出,正常结束(或取消)后把全文落库,报告 Tab 可回看。
       const monthly = await createMonthlyStream(req.signal);
-      stream = withStreamTap(monthly, (text) => {
-        // agentLoop 对无输出/中途失败会写入"[生成失败：…]"兜底——那是错误不是报告,不落库。
-        if (!text.trim() || text.includes("[生成失败")) return;
+      stream = withStreamTap(monthly, (text, cancelled) => {
+        // 取消只存半截报告,宁可不落库让用户重新生成;
+        // agentLoop 对无输出/中途失败会写入"[生成失败：…]"兜底——那是错误不是报告,同样不落库。
+        if (cancelled || !text.trim() || text.includes("[生成失败")) return;
         try {
           savePeriodReport("monthly", localDaysAgo(29), localToday(), text);
         } catch (e) {

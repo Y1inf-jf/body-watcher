@@ -181,7 +181,10 @@ export function buildExerciseBaseline(logs: TrainingLogRow[]): ExerciseBaselineE
   const entries: ExerciseBaselineEntry[] = [];
   for (const [name, a] of perName) {
     const totalSets = a.rows.reduce((s, r) => s + r.sets, 0);
-    const loaded = a.rows.filter((r) => r.weight > 0).sort((x, y) => y.weight - x.weight);
+    // 最强一组 = 最大重量,同重量取次数多的那组。
+    const loaded = a.rows
+      .filter((r) => r.weight > 0)
+      .sort((x, y) => y.weight - x.weight || y.reps - x.reps);
     const top = loaded[0] ?? a.rows.slice().sort((x, y) => y.reps - x.reps)[0];
     if (!top) continue;
     const topSet =

@@ -88,10 +88,16 @@ export default function PlanPage() {
     }
   }, []);
 
+  // 打开会话的"最新请求"标记:响应回来只认最新一次点击,防止快速切换会话时
+  // 旧响应后到覆盖新会话消息(否则追问会把 A 的内容写进 B 的会话)。
+  const openRequestIdRef = useRef<number | null>(null);
+
   const openSession = useCallback((id: number) => {
+    openRequestIdRef.current = id;
     fetch(`/api/chat?sessionId=${id}`)
       .then((r) => r.json())
       .then((d) => {
+        if (openRequestIdRef.current !== id) return;
         if (Array.isArray(d.messages)) {
           setMessages(
             d.messages.map((m: { role: string; content: string }) => ({
@@ -189,6 +195,7 @@ export default function PlanPage() {
 
   const closeConversation = () => {
     if (streaming) return;
+    openRequestIdRef.current = null;
     setSessionId(null);
     sessionIdRef.current = null;
     setMessages([]);
