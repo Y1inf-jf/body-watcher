@@ -81,7 +81,8 @@ export async function POST(req: NextRequest) {
       // 阶段复盘:流式输出,正常结束(或取消)后把全文落库,报告 Tab 可回看。
       const monthly = await createMonthlyStream(req.signal);
       stream = withStreamTap(monthly, (text) => {
-        if (!text.trim()) return;
+        // agentLoop 对无输出/中途失败会写入"[生成失败：…]"兜底——那是错误不是报告,不落库。
+        if (!text.trim() || text.includes("[生成失败")) return;
         try {
           savePeriodReport("monthly", localDaysAgo(29), localToday(), text);
         } catch (e) {

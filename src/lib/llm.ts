@@ -84,6 +84,8 @@ export interface AgentLoopOptions {
  * 不使用 toTextStreamResponse：v6 的文本流会把 error 部分静默丢弃，
  * LLM 报错（401/429/超时）在界面上表现为 0 字节"成功"。这里自己消费 textStream——
  * 迭代抛错时把错误信息写进流，前端面板直接可见。
+ * 请求级错误（如上游 503/模型下线）更隐蔽：连抛错都没有，textStream 以 0 文本
+ * 干净结束，故流结束仍无输出时兜底写入错误提示。
  */
 export function agentLoop(
   systemPrompt: string,
@@ -110,14 +112,19 @@ export function agentLoop(
   const encoder = new TextEncoder();
   return new ReadableStream<Uint8Array>({
     async start(controller) {
+      // 兜底判据:正常结束但一个字都没输出。v6 会把请求级错误(上游 503/模型已下线)
+      // 吞成"0 文本的干净结束"——不抛错、fullStream 也无 error 事件,唯一的信号就是无输出。
+      let out = "";
       try {
         for await (const delta of result.textStream) {
           if (opts.signal?.aborted) break;
+          out += delta;
           controller.enqueue(encoder.encode(delta));
         }
       } catch (err) {
         if (!opts.signal?.aborted) {
           const msg = err instanceof Error ? err.message : String(err);
+          out += msg;
           try {
             controller.enqueue(encoder.encode(`\n\n[生成失败：${msg}]`));
           } catch {
@@ -125,6 +132,15 @@ export function agentLoop(
           }
         }
       } finally {
+        if (!out.trim() && !opts.signal?.aborted) {
+          try {
+            controller.enqueue(
+              encoder.encode(`\n\n[生成失败：模型未返回任何内容，可能上游故障或模型已下线，请到设置页检查 LLM 配置]`)
+            );
+          } catch {
+            // 流已关闭，无从报告
+          }
+        }
         try {
           controller.close();
         } catch {
