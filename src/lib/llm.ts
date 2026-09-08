@@ -64,7 +64,16 @@ export async function testLlmConnection(): Promise<{ ok: boolean; message: strin
       maxRetries: 0,
       abortSignal: AbortSignal.timeout(20000),
     });
-    return { ok: true, message: text.trim().slice(0, 50) || "(空回复)" };
+    const trimmed = text.trim();
+    if (!trimmed) {
+      // 请求级错误( baseUrl 缺 /v1 打到中转站官网 HTML、上游 503/模型下线)不抛错,
+      // 只表现为空回复——必须判失败,否则"测试"通过而实际对话全是静默空流。
+      return {
+        ok: false,
+        message: "模型返回空内容：多为 baseUrl 缺路径(如需以 /v1 结尾)或上游不可用",
+      };
+    }
+    return { ok: true, message: trimmed.slice(0, 50) };
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : String(err) };
   }
