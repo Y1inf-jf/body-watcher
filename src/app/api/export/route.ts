@@ -1,8 +1,8 @@
-import { exportAllTraining, exportAllHealth } from "@/lib/db";
+import { exportAllTraining, exportAllGoogleMetrics } from "@/lib/db";
 
 export async function GET() {
   const { logs, exercises } = exportAllTraining();
-  const health = exportAllHealth() as Record<string, unknown>[];
+  const health = exportAllGoogleMetrics();
 
   const esc = (v: unknown) => {
     if (v === null || v === undefined) return "";
@@ -31,10 +31,34 @@ export async function GET() {
   }
 
   lines.push("");
-  lines.push("=== 健康数据 ===");
-  lines.push("date,hrv,resting_hr,systolic,diastolic,sleep_hours,sleep_quality,weight,body_fat,rpe,rest_day,notes");
+  lines.push("=== 健康数据(Google 同步)===");
+  lines.push("date,hrv_avg_ms,hrv_rmssd_deep_ms,hrv_nonrem_hr,hrv_entropy,resting_hr,respiratory_rate,spo2_avg,weight_kg,steps,exercise_count,exercise_minutes,sleep_in_bed_minutes,sleep_deep_minutes,sleep_rem_minutes,sleep_light_minutes,sleep_awake_minutes,sleep_bedtime,sleep_wakeup");
   for (const h of health) {
-    lines.push(`${h.date},${esc(h.hrv)},${esc(h.resting_hr)},${esc(h.systolic)},${esc(h.diastolic)},${esc(h.sleep_hours)},${esc(h.sleep_quality)},${esc(h.weight)},${esc(h.body_fat)},${esc(h.rpe)},${esc(h.rest_day)},${esc(h.notes)}`);
+    lines.push(
+      [
+        h.date,
+        h.hrv_avg_ms,
+        h.hrv_rmssd_deep_ms,
+        h.hrv_nonrem_hr,
+        h.hrv_entropy,
+        h.resting_hr,
+        h.respiratory_rate,
+        h.spo2_avg,
+        h.weight_kg,
+        h.steps,
+        h.exercise_count,
+        h.exercise_minutes,
+        h.sleep_in_bed_minutes,
+        h.sleep_deep_minutes,
+        h.sleep_rem_minutes,
+        h.sleep_light_minutes,
+        h.sleep_awake_minutes,
+        h.sleep_bedtime,
+        h.sleep_wakeup,
+      ]
+        .map(esc)
+        .join(",")
+    );
   }
 
   const csv = lines.join("\n");

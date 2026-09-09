@@ -1327,9 +1327,9 @@ export function exportAllTraining() {
   return { logs, exercises };
 }
 
-export function exportAllHealth() {
+export function exportAllGoogleMetrics() {
   const db = getDb();
-  return db.prepare("SELECT * FROM daily_health ORDER BY date ASC").all();
+  return db.prepare("SELECT * FROM google_daily_metrics ORDER BY date ASC").all() as Record<string, unknown>[];
 }
 
 // --- Google Health sync ---
