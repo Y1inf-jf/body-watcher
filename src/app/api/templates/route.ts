@@ -6,8 +6,17 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const { name, exercises } = await request.json();
-  if (!name || !exercises) return NextResponse.json({ error: "name and exercises required" }, { status: 400 });
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "invalid json" }, { status: 400 });
+  }
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (!name || name.length > 60 || body.exercises == null) {
+    return NextResponse.json({ error: "name (1-60 chars) and exercises required" }, { status: 400 });
+  }
+  const exercises = body.exercises;
   saveTemplate({ name, exercises: typeof exercises === "string" ? exercises : JSON.stringify(exercises) });
   return NextResponse.json({ ok: true });
 }

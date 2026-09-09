@@ -462,19 +462,20 @@ export function setLlmSettings(patch: Partial<LlmSettings>): void {
 
 // --- Health queries ---
 
+// 可选字段统一允许 null:调用方普遍传 null 表示"未填"(列为可空,绑定语义一致)。
 export function upsertHealth(data: {
   date: string;
-  hrv?: number;
-  resting_hr?: number;
-  systolic?: number;
-  diastolic?: number;
-  sleep_hours?: number;
-  sleep_quality?: number;
-  weight?: number;
-  body_fat?: number;
-  rpe?: number;
-  notes?: string;
-  rest_day?: number;
+  hrv?: number | null;
+  resting_hr?: number | null;
+  systolic?: number | null;
+  diastolic?: number | null;
+  sleep_hours?: number | null;
+  sleep_quality?: number | null;
+  weight?: number | null;
+  body_fat?: number | null;
+  rpe?: number | null;
+  notes?: string | null;
+  rest_day?: number | null;
 }) {
   const db = getDb();
   return db.prepare(`
@@ -514,19 +515,19 @@ export function getLatestHealth() {
 
 export function insertTrainingLog(data: {
   date: string;
-  duration?: number;
-  total_volume?: number;
-  rpe?: number;
-  notes?: string;
+  duration?: number | null;
+  total_volume?: number | null;
+  rpe?: number | null;
+  notes?: string | null;
   plan_id?: number | null;
 }, exercises: {
   exercise_name: string;
   muscle_group: string;
-  sets?: number;
-  reps?: number;
-  weight?: number;
-  bodyweight?: boolean;
-  rpe?: number;
+  sets?: number | null;
+  reps?: number | null;
+  weight?: number | null;
+  bodyweight?: boolean | number;
+  rpe?: number | null;
 }[]) {
   const db = getDb();
   const insertLog = db.prepare(`
@@ -1229,8 +1230,8 @@ export function deleteTrainingLog(id: number) {
 
 export function updateTrainingLog(
   id: number,
-  data: { date: string; duration?: number; total_volume?: number; rpe?: number; notes?: string },
-  exercises: { exercise_name: string; muscle_group: string; sets?: number; reps?: number; weight?: number; bodyweight?: boolean; rpe?: number }[]
+  data: { date: string; duration?: number | null; total_volume?: number | null; rpe?: number | null; notes?: string | null },
+  exercises: { exercise_name: string; muscle_group: string; sets?: number | null; reps?: number | null; weight?: number | null; bodyweight?: boolean | number; rpe?: number | null }[]
 ) {
   const db = getDb();
   const tx = db.transaction(() => {
