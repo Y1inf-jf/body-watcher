@@ -63,18 +63,26 @@ export default function HealthForm() {
     }
     if (data.notes) body.notes = data.notes;
 
-    const res = await fetch("/api/health", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    let res: Response;
+    try {
+      res = await fetch("/api/health", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch {
+      // 网络层失败(代理拦断/断网):fetch 抛错,不捕获就是无声失败
+      setSaving(false);
+      setMessage("网络错误,未保存(检查代理/网络)");
+      return;
+    }
 
     setSaving(false);
     if (res.ok) {
       setMessage("已保存");
       setTimeout(() => setMessage(""), 2000);
     } else {
-      setMessage("保存失败");
+      setMessage(res.status === 401 ? "登录已过期,请刷新页面重新登录" : "保存失败");
     }
   };
 
