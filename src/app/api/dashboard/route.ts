@@ -18,7 +18,7 @@ import {
   type GoogleMetricRow,
   type TrainingLogRow,
 } from "@/lib/recovery";
-import { computeTrainingStatus, computeHrLoadStatus, hrLoadsByDateFromRows, computeSleepNeed } from "@/lib/training-status";
+import { computeTrainingStatus, computeHrLoadStatus, hrLoadsByDateFromRows, hrDailyFromRows, computeSleepNeed } from "@/lib/training-status";
 import { computeReadiness } from "@/lib/readiness";
 import { mergeManualHealth, latestManualSleepQuality } from "@/lib/health-merge";
 
@@ -36,8 +36,11 @@ export async function GET() {
   const recoveryFeatures = computeRecoveryFeatures(mergedRows, { sleepTargets });
   const recoveryScore = computeRecoveryScore(recoveryFeatures);
   const trainingStatus = computeTrainingStatus(queryTrainingHistoryDetailed(35) as TrainingLogRow[]);
-  // 心率负荷对照:手环运动记录算出的并行 ACWR,与 RPE 负荷互查。
-  trainingStatus.hr = computeHrLoadStatus(hrLoadsByDateFromRows(googleRows));
+  // 心率负荷对照:手环运动记录算出的并行 ACWR,与 RPE 负荷互查;daily 供总览卡展开明细。
+  trainingStatus.hr = {
+    ...computeHrLoadStatus(hrLoadsByDateFromRows(googleRows)),
+    daily: hrDailyFromRows(googleRows),
+  };
   const sleepNeed = computeSleepNeed(recoveryFeatures.sleep, trainingStatus.yesterdayLoad, sleepTargets);
   // 今日建议:恢复(扛不扛得住) × 负荷(练没练多)合成一个行动结论。
   const readiness = computeReadiness(trainingStatus, recoveryScore, {

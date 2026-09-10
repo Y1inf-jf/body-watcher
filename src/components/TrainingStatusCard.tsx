@@ -1,4 +1,5 @@
-import type { HrLoadStatus, TrainingStatus } from "@/lib/training-status";
+import { useState } from "react";
+import type { HrDay, HrLoadStatus, TrainingStatus } from "@/lib/training-status";
 import { ACWR_ZONE_META, FORM_ZONE_META } from "@/lib/zone-meta";
 import { Card, CardTitle } from "./ui/Card";
 import GaugeRing from "./ui/GaugeRing";
@@ -129,18 +130,75 @@ export default function TrainingStatusCard({ status }: { status: TrainingStatus 
 
 // 心率负荷对照(手环运动记录的并行 ACWR):与 RPE 负荷互查。
 // 两者背离(如 RPE 侧"欠训练"而心率侧不低)多半是 RPE 漏填被低估;daysWithHr 少说明训练时没开运动模式。
+// 点击展开近 7 天逐日明细。
 function HrLoadLine({ hr }: { hr: HrLoadStatus }) {
+  const [open, setOpen] = useState(false);
   const zone = hr.acwr.zone ? ACWR_ZONE_META[hr.acwr.zone] : null;
+  const daily = hr.daily ?? [];
   return (
-    <div className="mt-2 flex items-baseline justify-between gap-2 text-[10px]">
-      <span className="shrink-0 uppercase tracking-[0.14em] text-zinc-500">心率负荷对照</span>
-      {hr.acwr.value !== null && zone ? (
-        <span className={`font-mono tabular-nums ${zone.text}`}>
-          HR-ACWR {hr.acwr.value.toFixed(2)} {zone.label} · 周负荷 {hr.load7d} AU · {hr.daysWithHr} 天有手环记录
+    <div className="mt-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-baseline justify-between gap-2 text-left text-[10px]"
+      >
+        <span className="shrink-0 uppercase tracking-[0.14em] text-zinc-500">
+          <span className="mr-1 inline-block w-2.5 text-zinc-600">{open ? "▾" : "▸"}</span>心率负荷对照
         </span>
-      ) : (
-        <span className="font-mono text-zinc-500">{hr.acwr.note ?? "心率负荷累计中"}</span>
+        {hr.acwr.value !== null && zone ? (
+          <span className={`font-mono tabular-nums ${zone.text}`}>
+            HR-ACWR {hr.acwr.value.toFixed(2)} {zone.label} · 周负荷 {hr.load7d} AU · {hr.daysWithHr} 天有手环记录
+          </span>
+        ) : (
+          <span className="font-mono text-zinc-500">{hr.acwr.note ?? "心率负荷累计中"}</span>
+        )}
+      </button>
+      {open && (
+        <div className="mt-1.5 overflow-hidden rounded-md border border-white/10">
+          {daily.length === 0 ? (
+            <p className="px-2.5 py-2 text-[10px] text-zinc-500">
+              近 7 天没有手环运动记录——训练时开一次运动模式即可
+            </p>
+          ) : (
+            <table className="w-full table-fixed font-mono text-[10px] tabular-nums">
+              <thead>
+                <tr className="border-b border-white/10 text-left text-zinc-500">
+                  <th className="px-2.5 py-1 font-medium">日期</th>
+                  <th className="px-1.5 py-1 font-medium">分钟</th>
+                  <th className="px-1.5 py-1 font-medium">均心率</th>
+                  <th className="px-1.5 py-1 font-medium">分区</th>
+                  <th className="px-2.5 py-1 text-right font-medium">负荷</th>
+                </tr>
+              </thead>
+              <tbody>
+                {daily.map((d) => (
+                  <tr
+                    key={d.date}
+                    title={`${d.date} · ${d.count} 次会话${d.calories !== null ? ` · ${d.calories} kcal` : ""}`}
+                    className="border-b border-white/5 text-zinc-300 last:border-0"
+                  >
+                    <td className="px-2.5 py-1">{d.date.slice(5)}</td>
+                    <td className="px-1.5 py-1">{d.minutes}</td>
+                    <td className="px-1.5 py-1">{d.avgHr ?? "—"}</td>
+                    <td className="px-1.5 py-1 text-zinc-400">{zonesLabel(d.zones)}</td>
+                    <td className="px-2.5 py-1 text-right">{d.load} AU</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       )}
     </div>
   );
+}
+
+const ZONE_LABELS: Record<keyof HrDay["zones"], string> = { light: "轻", moderate: "中", vigorous: "剧", peak: "峰" };
+
+// "轻 46分 中 3分"——只列非零区,秒取整为分钟。
+function zonesLabel(z: HrDay["zones"]): string {
+  const parts = (Object.keys(ZONE_LABELS) as (keyof HrDay["zones"])[])
+    .filter((k) => z[k] > 0)
+    .map((k) => `${ZONE_LABELS[k]}${Math.round(z[k] / 60)}分`);
+  return parts.length > 0 ? parts.join(" ") : "—";
 }

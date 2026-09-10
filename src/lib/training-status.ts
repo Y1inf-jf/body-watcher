@@ -169,6 +169,17 @@ export interface HrLoadStatus {
   load7d: number; // 近 7 天心率负荷 AU
   acwr: AcwrResult;
   daysWithHr: number; // 窗口内有手环运动记录的天数
+  daily?: HrDay[]; // 逐日明细(总览卡展开表用;agent 侧不带,payload 控制)
+}
+
+export interface HrDay {
+  date: string;
+  count: number; // 当日会话数
+  minutes: number;
+  avgHr: number | null; // 按时长加权的会话平均心率
+  zones: { light: number; moderate: number; vigorous: number; peak: number }; // 停留秒数
+  calories: number | null;
+  load: number; // 心率负荷 AU
 }
 
 // 与 computeTrainingStatus 同窗口的并行心率负荷状态。hrLoadsByDate 是
@@ -215,6 +226,35 @@ export function hrLoadsByDateFromRows(
     if (au > 0) map.set(r.date, au);
   }
   return map;
+}
+
+// 近 N 天逐日心率明细,只留有手环运动记录的日子,新→旧(总览卡展开表)。
+export function hrDailyFromRows(
+  rows: readonly { date?: string | null; [key: string]: unknown }[],
+  days = 7
+): HrDay[] {
+  const out: HrDay[] = [];
+  for (const r of rows) {
+    if (!r.date) continue;
+    const count = Number(r.exercise_count ?? 0);
+    const zones = {
+      light: Number(r.exercise_zone_light_s ?? 0),
+      moderate: Number(r.exercise_zone_moderate_s ?? 0),
+      vigorous: Number(r.exercise_zone_vigorous_s ?? 0),
+      peak: Number(r.exercise_zone_peak_s ?? 0),
+    };
+    if (count <= 0 && zones.light + zones.moderate + zones.vigorous + zones.peak <= 0) continue;
+    out.push({
+      date: r.date,
+      count,
+      minutes: Number(r.exercise_minutes ?? 0),
+      avgHr: r.exercise_avg_hr == null ? null : Number(r.exercise_avg_hr),
+      zones,
+      calories: r.exercise_calories == null ? null : Number(r.exercise_calories),
+      load: hrLoadAu(zones.light, zones.moderate, zones.vigorous, zones.peak),
+    });
+  }
+  return out.slice(-days).reverse();
 }
 
 // ---------- Form 体力-疲劳(Banister / CTL-ATL-TSB 体系) ----------
