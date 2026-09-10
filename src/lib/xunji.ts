@@ -91,6 +91,12 @@ function num(v: string | number | undefined | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// 训记用 0 表示"未填 RPE"(量表 1-10),入库前归一成 null,别让 0 混进负荷计算。
+function numRpe(v: string | number | undefined | null): number | null {
+  const n = num(v);
+  return n !== null && n > 0 ? n : null;
+}
+
 function collectExerciseRows(train: RawTrain): XunjiExerciseRow[] {
   const rows: XunjiExerciseRow[] = [];
   for (const movement of train.movements ?? []) {
@@ -104,7 +110,7 @@ function collectExerciseRows(train: RawTrain): XunjiExerciseRow[] {
             muscle_group: inferMuscleGroup(item.name || movement.name || ""),
             reps: num(inner.reps),
             weight: num(inner.weight),
-            rpe: num(inner.rpe),
+            rpe: numRpe(inner.rpe),
           });
         }
       } else {
@@ -113,7 +119,7 @@ function collectExerciseRows(train: RawTrain): XunjiExerciseRow[] {
           muscle_group: inferMuscleGroup(movement.name ?? ""),
           reps: num(set.reps),
           weight: num(set.weight),
-          rpe: num(set.rpe),
+          rpe: numRpe(set.rpe),
         });
       }
     }

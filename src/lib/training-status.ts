@@ -31,6 +31,13 @@ export function estimateRpe(totalSets: number, durationMin: number): number {
   return Math.round(clamp(raw, 1, 10) * 2) / 2;
 }
 
+// RPE 量表 1-10。训记镜像里未填的动作带的是 0 而不是空,0 一并按"未填"处理,
+// 否则会混进均值把当天负荷拉到远低于实际(9/8 那次 21 个动作 15 个 0,均值被拖到 2.3)。
+function validRpe(v: unknown): number | null {
+  const n = Number(v);
+  return v != null && Number.isFinite(n) && n > 0 ? n : null;
+}
+
 // 单次训练 → 负荷。RPE 来源优先级:会话 rpe → 动作 rpe 均值(训记镜像)→ 启发式估计。
 // 时长缺失时按 组数×3 分钟 估。完全空的记录返回 0。
 export function sessionLoadOf(log: TrainingLogRow): {
@@ -46,15 +53,12 @@ export function sessionLoadOf(log: TrainingLogRow): {
   }
   if (duration <= 0) return { load: 0, rpe: null, estimated: true };
 
-  const exerciseRpes = exercises
-    .map((e) => (e.rpe == null ? null : Number(e.rpe)))
-    .filter((v): v is number => v !== null && !Number.isNaN(v));
+  const exerciseRpes = exercises.map((e) => validRpe(e.rpe)).filter((v): v is number => v !== null);
   const sessionRpe =
-    log.rpe != null
-      ? Number(log.rpe)
-      : exerciseRpes.length > 0
-        ? exerciseRpes.reduce((a, b) => a + b, 0) / exerciseRpes.length
-        : null;
+    validRpe(log.rpe) ??
+    (exerciseRpes.length > 0
+      ? exerciseRpes.reduce((a, b) => a + b, 0) / exerciseRpes.length
+      : null);
 
   // estimated 只标记"RPE 是估的"(与 UI/工具的提示文案一致);缺时长按组数估是另一回事,不影响 RPE 真实性。
   const estimated = sessionRpe === null;
