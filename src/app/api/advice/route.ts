@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ADVICE_STATUSES, getAdvice, resolveAdvice, type AdviceStatus } from "@/lib/db";
+import { computeInsights } from "@/lib/insights";
 
 // 建议反馈回填:总览页快捷条「采纳/部分/未采纳」+ 可选体感 RPE 与一句话。可反复修改。
 export async function PATCH(req: NextRequest) {
@@ -31,5 +32,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "advice not found" }, { status: 404 });
   }
   resolveAdvice(id, status, rpe, notes);
+  // 回填改变了 pending 积压数,重算洞察让「N 条还没回填」横幅的数字当场准确。
+  computeInsights();
   return NextResponse.json({ ok: true, advice: getAdvice(id) });
 }

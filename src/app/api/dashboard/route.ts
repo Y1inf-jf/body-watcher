@@ -7,6 +7,7 @@ import {
   queryTrainingHistoryDetailed,
   getSleepTargets,
   upsertDailyAdvice,
+  getLatestPendingDailyAdviceBefore,
   getActiveInsights,
   upsertRecoverySnapshot,
 } from "@/lib/db";
@@ -40,11 +41,15 @@ export async function GET() {
   const readiness = computeReadiness(trainingStatus, recoveryScore, {
     manualSleepQuality: latestManualSleepQuality(healthMetrics as Record<string, unknown>[]),
   });
+  const today = localToday();
   // 建议闭环:日建议落档(同日重算只刷新文案,不动已回填的采纳状态/体感)。
-  const advice = upsertDailyAdvice(localToday(), readiness.headline, readiness.detail);
+  const todayAdvice = upsertDailyAdvice(today, readiness.headline, readiness.detail);
+  // 回填条目标:优先最近一条未回填的往日建议(用户晚上练、隔天早上来补昨天的闭环),
+  // 无积压则挂今天这条(晚间来访可当天闭环)。
+  const advice = getLatestPendingDailyAdviceBefore(today) ?? todayAdvice;
   // 阶段复盘:每日恢复快照存档(同日重算刷新),供月报看趋势。
   upsertRecoverySnapshot({
-    date: localToday(),
+    date: today,
     score: recoveryScore.score,
     zone: recoveryScore.zone,
     hrv_z: recoveryFeatures.hrv.zScore,
@@ -112,6 +117,7 @@ export async function GET() {
     trainingStatus,
     sleepNeed,
     readiness,
+    today,
     advice,
     insights: getActiveInsights(),
     chartSeries,

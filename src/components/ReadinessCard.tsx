@@ -48,12 +48,14 @@ export default function ReadinessCard({
   recovery,
   status,
   advice,
+  today,
   onAdviceUpdate,
 }: {
   readiness: Readiness;
   recovery: RecoveryScore;
   status: TrainingStatus;
   advice?: AdviceView;
+  today?: string;
   onAdviceUpdate?: (a: AdviceView) => void;
 }) {
   const zone = READY_ZONE_META[readiness.level];
@@ -86,7 +88,7 @@ export default function ReadinessCard({
         </div>
       )}
 
-      {advice && <AdviceFeedback advice={advice} onUpdate={onAdviceUpdate} />}
+      {advice && <AdviceFeedback key={advice.id} advice={advice} today={today} onUpdate={onAdviceUpdate} />}
 
       <p className="mt-2 text-[10px] text-zinc-600">
         恢复决定今天练多重，负荷决定今天练不练 · 当下体感与它冲突时，以体感为准
@@ -95,8 +97,18 @@ export default function ReadinessCard({
   );
 }
 
-// 建议闭环反馈:今天这条建议照做了吗?+ 可选体感。选完即写库,教练下次会读到。
-function AdviceFeedback({ advice, onUpdate }: { advice: AdviceView; onUpdate?: (a: AdviceView) => void }) {
+// 建议闭环反馈:卡片主体展示的是今天的恢复结论,而回填目标由后端选定——
+// 晨访时优先递最近一条未回填的往日建议(通常是昨天,练完当晚不看站的人早上补),
+// 无积压则挂今天这条。选完即写库,教练下次会读到。
+function AdviceFeedback({
+  advice,
+  today,
+  onUpdate,
+}: {
+  advice: AdviceView;
+  today?: string;
+  onUpdate?: (a: AdviceView) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [picked, setPicked] = useState<AdviceView["status"]>(advice.status);
   const [rpe, setRpe] = useState("");
@@ -104,6 +116,14 @@ function AdviceFeedback({ advice, onUpdate }: { advice: AdviceView; onUpdate?: (
   const [saving, setSaving] = useState(false);
 
   const resolved = advice.status !== "pending" && !editing;
+
+  // 往日建议要亮出日期与原文,否则用户面对的是今天的结论、评的却是昨天的建议。
+  const dayDiff =
+    today && advice.date < today
+      ? Math.round((Date.parse(today) - Date.parse(advice.date)) / 86400000)
+      : 0;
+  const dayLabel = dayDiff === 1 ? "昨天" : dayDiff > 1 ? advice.date.slice(5) : "";
+  const question = dayDiff >= 1 ? `${dayLabel}这条建议，做到了吗？` : "这条建议，今天做到了吗？";
 
   const pick = (s: AdviceView["status"]) => {
     setPicked(s);
@@ -135,8 +155,13 @@ function AdviceFeedback({ advice, onUpdate }: { advice: AdviceView; onUpdate?: (
 
   return (
     <div className="mt-3 border-t border-white/5 pt-3">
+      {dayLabel && (
+        <p className="mb-1.5 text-xs text-zinc-300">
+          <span className="text-zinc-500">{dayLabel}的建议</span> · {advice.headline}
+        </p>
+      )}
       <div className="flex items-center justify-between gap-3">
-        <span className="text-[11px] text-zinc-500">这条建议，今天做到了吗？</span>
+        <span className="text-[11px] text-zinc-500">{question}</span>
         {resolved && (
           <span className={`text-[11px] ${STATUS_COLOR[advice.status]}`}>
             {STATUS_LABEL[advice.status]}

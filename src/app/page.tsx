@@ -27,6 +27,7 @@ interface DashboardData {
   trainingStatus?: TrainingStatus;
   sleepNeed?: SleepNeedResult | null;
   readiness?: Readiness;
+  today?: string;
   advice?: AdviceView;
   insights?: InsightView[];
   chartSeries?: {
@@ -133,7 +134,12 @@ export default function DashboardPage() {
           recovery={data.recovery.score}
           status={data.trainingStatus}
           advice={data.advice}
-          onAdviceUpdate={(a) => setData((d) => (d ? { ...d, advice: a } : d))}
+          today={data.today}
+          onAdviceUpdate={(a) => {
+            setData((d) => (d ? { ...d, advice: a } : d));
+            // 回填一条后重拉:有积压时反馈条切到下一条待回填,顺带刷新洞察数字。
+            fetchData();
+          }}
         />
       )}
 

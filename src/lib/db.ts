@@ -862,6 +862,16 @@ export function countStalePendingAdvice(days: number): number {
   return row.n;
 }
 
+// 最近一条待回填的往日日建议(晨访场景:昨晚练完,今早来补昨天的闭环)。
+export function getLatestPendingDailyAdviceBefore(date: string): AdviceRow | undefined {
+  const db = getDb();
+  return db
+    .prepare(
+      "SELECT * FROM advice_log WHERE source = 'daily' AND status = 'pending' AND date < ? ORDER BY date DESC, id DESC LIMIT 1"
+    )
+    .get(date) as AdviceRow | undefined;
+}
+
 // --- Insights(主动洞察:sync 后规则引擎产出,总览横幅展示,可关掉) ---
 
 export interface InsightRow {
@@ -908,6 +918,13 @@ export function getActiveInsights(days: number = 3, limit: number = 5): InsightR
 export function dismissInsight(id: number): void {
   const db = getDb();
   db.prepare("UPDATE insights SET dismissed_at = datetime('now','localtime') WHERE id = ?").run(id);
+}
+
+// 删掉某规则当天的洞察:条件不再命中时让横幅立即消失(如积压回填完清掉 advice_stale)。
+// 硬删即可——条件重新命中会照常 upsert,不影响"已关掉不复活"的语义。
+export function clearInsight(ruleId: string, date: string): void {
+  const db = getDb();
+  db.prepare("DELETE FROM insights WHERE rule_id = ? AND date = ?").run(ruleId, date);
 }
 
 // --- 阶段复盘(每日恢复快照 + 周期报告持久化) ---

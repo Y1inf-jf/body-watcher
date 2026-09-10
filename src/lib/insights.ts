@@ -8,6 +8,7 @@ import {
   getSleepTargets,
   countStalePendingAdvice,
   upsertInsight,
+  clearInsight,
 } from "./db";
 import {
   computeRecoveryFeatures,
@@ -94,7 +95,10 @@ export function computeInsights(): void {
       today,
       "info",
       `${stale} 条建议还没回填`,
-      "总览页「今日建议」卡可以回填采纳情况和体感。回填得越勤，教练对你的判断越准。"
+      "早上打开总览页会把最近没回填的建议递给你。回填得越勤，教练对你的判断越准。"
     );
+  } else {
+    // 积压清完了就让横幅当场消失,而不是挂到隔天。
+    clearInsight("advice_stale", today);
   }
 }
