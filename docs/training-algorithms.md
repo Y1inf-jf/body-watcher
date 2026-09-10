@@ -95,6 +95,35 @@ z_sleep = −(睡眠债分钟数) / 45                    比近7天均值少睡
 
 ---
 
+## 3.5 心率负荷对照(Fitbit 四区 TRIMP,并行指标)
+
+**出处**:Foster TRIMP 的区间加权思路。2026-09-10 实测确认 Google Health API 的
+`exercise` 会话自带手环(Fitbit Air)算好的心率汇总:`averageHeartRateBeatsPerMinute`
+与 `heartRateZoneDurations`(light/moderate/vigorous/peak 四区停留秒数),同步时落进
+`google_daily_metrics`(列 `exercise_avg_hr` / `exercise_zone_*_s` / `exercise_calories`),
+历史数据由 `scripts/backfill-exercise-hr.ts` 从 `google_raw_data` 回填。
+
+**公式**:
+
+```
+心率负荷(AU) = (轻区秒 + 中区秒×2 + 剧烈秒×3 + 峰值秒×4) / 60
+```
+
+区间系数取 Foster 五区制前四档。量纲刻意与 sRPE 对齐:46 分钟轻区 ≈ 46 AU,
+两条日负荷序列可直接对照(`trainingStatus.hr`,同窗口同 EWMA 核心的并行 ACWR)。
+
+**怎么用(互查,不替代)**:力量训练里心率滞后于用力,sRPE 才是负荷主口径(第 3 节);
+心率侧的价值在交叉验证——
+
+- 两侧方向一致 → 结论更可信;
+- RPE 侧"欠训练"而心率侧负荷不低 → 多半是 RPE 漏填(均值被 0 分/缺分拉低),先查心率侧再下结论;
+- 心率侧 `daysWithHr` 少 → 用户训练时没开手环运动模式,此时心率侧缺数据≠没练,不要拿它否定 RPE 侧。
+
+**已知限制**:`heart-rate` 原始序列(~2.4s 一个采样,全天 4 万点)不支持服务端时间过滤,
+全量入库成本高,暂不落库;分区数据只覆盖"开了运动模式"的会话,被动识别的心率不进负荷。
+
+---
+
 ## 4. ACWR 急慢性负荷比(训练状态主指标)
 
 **出处**:Williams et al. 2017(EWMA 版);Gabbett 2016 把 ACWR 带火(《The training—injury prevention paradox》)。

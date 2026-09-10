@@ -1,4 +1,4 @@
-import type { TrainingStatus } from "@/lib/training-status";
+import type { HrLoadStatus, TrainingStatus } from "@/lib/training-status";
 import { ACWR_ZONE_META, FORM_ZONE_META } from "@/lib/zone-meta";
 import { Card, CardTitle } from "./ui/Card";
 import GaugeRing from "./ui/GaugeRing";
@@ -119,8 +119,28 @@ export default function TrainingStatusCard({ status }: { status: TrainingStatus 
               {status.estimatedSessions}/{status.totalSessions} 次训练的负荷由估计 RPE 得出——在训记里填 RPE 可显著提升精度
             </p>
           )}
+
+          {status.hr && <HrLoadLine hr={status.hr} />}
         </div>
       </div>
     </Card>
+  );
+}
+
+// 心率负荷对照(手环运动记录的并行 ACWR):与 RPE 负荷互查。
+// 两者背离(如 RPE 侧"欠训练"而心率侧不低)多半是 RPE 漏填被低估;daysWithHr 少说明训练时没开运动模式。
+function HrLoadLine({ hr }: { hr: HrLoadStatus }) {
+  const zone = hr.acwr.zone ? ACWR_ZONE_META[hr.acwr.zone] : null;
+  return (
+    <div className="mt-2 flex items-baseline justify-between gap-2 text-[10px]">
+      <span className="shrink-0 uppercase tracking-[0.14em] text-zinc-500">心率负荷对照</span>
+      {hr.acwr.value !== null && zone ? (
+        <span className={`font-mono tabular-nums ${zone.text}`}>
+          HR-ACWR {hr.acwr.value.toFixed(2)} {zone.label} · 周负荷 {hr.load7d} AU · {hr.daysWithHr} 天有手环记录
+        </span>
+      ) : (
+        <span className="font-mono text-zinc-500">{hr.acwr.note ?? "心率负荷累计中"}</span>
+      )}
+    </div>
   );
 }

@@ -197,6 +197,12 @@ function createTables(db: Database.Database) {
       weight_kg REAL,
       exercise_count INTEGER,
       exercise_minutes INTEGER,
+      exercise_avg_hr INTEGER,
+      exercise_zone_light_s INTEGER,
+      exercise_zone_moderate_s INTEGER,
+      exercise_zone_vigorous_s INTEGER,
+      exercise_zone_peak_s INTEGER,
+      exercise_calories INTEGER,
       synced_at TEXT
     );
 
@@ -259,6 +265,20 @@ function migrate(db: Database.Database) {
   // 建议闭环:训练记录回链它执行的计划。
   if (!logCols.find((c) => c.name === "plan_id")) {
     db.exec("ALTER TABLE training_log ADD COLUMN plan_id INTEGER");
+  }
+  // Google 每日指标:exercise 会话的心率汇总(平均心率/分区秒数/卡路里),供心率负荷对照。
+  const gdmCols = db.prepare("PRAGMA table_info(google_daily_metrics)").all() as { name: string }[];
+  if (!gdmCols.find((c) => c.name === "exercise_avg_hr")) {
+    for (const col of [
+      "exercise_avg_hr INTEGER",
+      "exercise_zone_light_s INTEGER",
+      "exercise_zone_moderate_s INTEGER",
+      "exercise_zone_vigorous_s INTEGER",
+      "exercise_zone_peak_s INTEGER",
+      "exercise_calories INTEGER",
+    ]) {
+      db.exec(`ALTER TABLE google_daily_metrics ADD COLUMN ${col}`);
+    }
   }
   // 教练笔记:pinned=硬约束(不被条数上限挤出);expires_at=时效信息的到期日。
   const noteCols = db.prepare("PRAGMA table_info(coach_notes)").all() as { name: string }[];
@@ -1402,6 +1422,12 @@ export interface GoogleDailyMetricsInput {
   weight_kg?: number | null;
   exercise_count?: number | null;
   exercise_minutes?: number | null;
+  exercise_avg_hr?: number | null;
+  exercise_zone_light_s?: number | null;
+  exercise_zone_moderate_s?: number | null;
+  exercise_zone_vigorous_s?: number | null;
+  exercise_zone_peak_s?: number | null;
+  exercise_calories?: number | null;
 }
 
 // 部分更新：各数据类型只写自己的列，未涉及的列保留旧值（与 upsertHealth 同模式）。
@@ -1427,6 +1453,12 @@ export function upsertGoogleDailyMetrics(data: GoogleDailyMetricsInput) {
     weight_kg: null,
     exercise_count: null,
     exercise_minutes: null,
+    exercise_avg_hr: null,
+    exercise_zone_light_s: null,
+    exercise_zone_moderate_s: null,
+    exercise_zone_vigorous_s: null,
+    exercise_zone_peak_s: null,
+    exercise_calories: null,
     synced_at: new Date().toISOString(),
     ...data,
   };
@@ -1434,11 +1466,15 @@ export function upsertGoogleDailyMetrics(data: GoogleDailyMetricsInput) {
     INSERT INTO google_daily_metrics (
       date, sleep_in_bed_minutes, sleep_deep_minutes, sleep_rem_minutes, sleep_light_minutes, sleep_awake_minutes,
       sleep_bedtime, sleep_wakeup, hrv_avg_ms, hrv_rmssd_deep_ms, hrv_nonrem_hr, hrv_entropy,
-      resting_hr, respiratory_rate, spo2_avg, steps, weight_kg, exercise_count, exercise_minutes, synced_at
+      resting_hr, respiratory_rate, spo2_avg, steps, weight_kg, exercise_count, exercise_minutes,
+      exercise_avg_hr, exercise_zone_light_s, exercise_zone_moderate_s, exercise_zone_vigorous_s, exercise_zone_peak_s,
+      exercise_calories, synced_at
     ) VALUES (
       @date, @sleep_in_bed_minutes, @sleep_deep_minutes, @sleep_rem_minutes, @sleep_light_minutes, @sleep_awake_minutes,
       @sleep_bedtime, @sleep_wakeup, @hrv_avg_ms, @hrv_rmssd_deep_ms, @hrv_nonrem_hr, @hrv_entropy,
-      @resting_hr, @respiratory_rate, @spo2_avg, @steps, @weight_kg, @exercise_count, @exercise_minutes, @synced_at
+      @resting_hr, @respiratory_rate, @spo2_avg, @steps, @weight_kg, @exercise_count, @exercise_minutes,
+      @exercise_avg_hr, @exercise_zone_light_s, @exercise_zone_moderate_s, @exercise_zone_vigorous_s, @exercise_zone_peak_s,
+      @exercise_calories, @synced_at
     )
     ON CONFLICT(date) DO UPDATE SET
       sleep_in_bed_minutes = COALESCE(excluded.sleep_in_bed_minutes, google_daily_metrics.sleep_in_bed_minutes),
@@ -1459,6 +1495,12 @@ export function upsertGoogleDailyMetrics(data: GoogleDailyMetricsInput) {
       weight_kg = COALESCE(excluded.weight_kg, google_daily_metrics.weight_kg),
       exercise_count = COALESCE(excluded.exercise_count, google_daily_metrics.exercise_count),
       exercise_minutes = COALESCE(excluded.exercise_minutes, google_daily_metrics.exercise_minutes),
+      exercise_avg_hr = COALESCE(excluded.exercise_avg_hr, google_daily_metrics.exercise_avg_hr),
+      exercise_zone_light_s = COALESCE(excluded.exercise_zone_light_s, google_daily_metrics.exercise_zone_light_s),
+      exercise_zone_moderate_s = COALESCE(excluded.exercise_zone_moderate_s, google_daily_metrics.exercise_zone_moderate_s),
+      exercise_zone_vigorous_s = COALESCE(excluded.exercise_zone_vigorous_s, google_daily_metrics.exercise_zone_vigorous_s),
+      exercise_zone_peak_s = COALESCE(excluded.exercise_zone_peak_s, google_daily_metrics.exercise_zone_peak_s),
+      exercise_calories = COALESCE(excluded.exercise_calories, google_daily_metrics.exercise_calories),
       synced_at = excluded.synced_at
   `).run(row);
 }

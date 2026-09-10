@@ -131,8 +131,8 @@ export interface AcwrResult {
 
 const ACWR_MIN_DAYS = 14;
 
-export function computeAcwr(series: DailyLoadPoint[]): AcwrResult {
-  const loads = series.map((p) => p.load);
+// ACWR 核心(对任意日负荷序列)。RPE 侧与心率对照侧共用同一套 EWMA/分区。
+function acwrFromLoads(loads: number[]): AcwrResult {
   if (loads.length < ACWR_MIN_DAYS) {
     return {
       value: null,
@@ -150,6 +150,71 @@ export function computeAcwr(series: DailyLoadPoint[]): AcwrResult {
   const value = Math.round((acute / chronic) * 100) / 100;
   const zone: AcwrZone = value < 0.8 ? "under" : value <= 1.3 ? "optimal" : value <= 1.5 ? "high" : "risk";
   return { value, acute: round1(acute), chronic: round1(chronic), zone, note: null };
+}
+
+export function computeAcwr(series: DailyLoadPoint[]): AcwrResult {
+  return acwrFromLoads(series.map((p) => p.load));
+}
+
+// ---------- 心率负荷对照(Fitbit 四区 TRIMP) ----------
+
+// 手环分区秒数 → 当日心率负荷 AU:四区分钟数 × 权重 1/2/3/4(Foster TRIMP 区间系数取前四档)。
+// 量纲与 sRPE 负荷同级(46 分钟轻区 ≈ 46 AU ≈ 一次轻训练),两条序列可直接对照;
+// 强度训练里心率滞后于用力,心率负荷普遍低于 RPE 负荷,看的是趋势与背离不是绝对相等。
+export function hrLoadAu(lightS: number, moderateS: number, vigorousS: number, peakS: number): number {
+  return Math.round(((lightS + moderateS * 2 + vigorousS * 3 + peakS * 4) / 60) * 10) / 10;
+}
+
+export interface HrLoadStatus {
+  load7d: number; // 近 7 天心率负荷 AU
+  acwr: AcwrResult;
+  daysWithHr: number; // 窗口内有手环运动记录的天数
+}
+
+// 与 computeTrainingStatus 同窗口的并行心率负荷状态。hrLoadsByDate 是
+// "日期 → 当日心率负荷 AU"(由 hrLoadAu 从 google_daily_metrics 的分区秒数算出)。
+// 没开手环运动模式的日子负荷为 0——与 RPE 侧"该练没练"含义不同,它还混着"没戴/没记录",
+// 所以两者背离时先查 daysWithHr 再下结论。
+export function computeHrLoadStatus(
+  hrLoadsByDate: Map<string, number>,
+  today: string = localToday()
+): HrLoadStatus {
+  const loads: number[] = [];
+  const end = new Date(`${today}T00:00:00`);
+  for (let i = 34; i >= 0; i--) {
+    const d = new Date(end);
+    d.setDate(d.getDate() - i);
+    const datestr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    loads.push(hrLoadsByDate.get(datestr) ?? 0);
+  }
+  const daysWithHr = loads.filter((v) => v > 0).length;
+  const acwr =
+    daysWithHr === 0
+      ? { value: null, acute: null, chronic: null, zone: null, note: "暂无手环运动记录,开一次运动模式即有心率负荷" }
+      : acwrFromLoads(loads);
+  return {
+    load7d: Math.round(loads.slice(-7).reduce((a, b) => a + b, 0)),
+    acwr,
+    daysWithHr,
+  };
+}
+
+// google_daily_metrics 行 → "日期 → 心率负荷 AU"。dashboard 路由与 agent 工具共用。
+export function hrLoadsByDateFromRows(
+  rows: readonly { date?: string | null; [key: string]: unknown }[]
+): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    if (!r.date) continue;
+    const au = hrLoadAu(
+      Number(r.exercise_zone_light_s ?? 0),
+      Number(r.exercise_zone_moderate_s ?? 0),
+      Number(r.exercise_zone_vigorous_s ?? 0),
+      Number(r.exercise_zone_peak_s ?? 0)
+    );
+    if (au > 0) map.set(r.date, au);
+  }
+  return map;
 }
 
 // ---------- Form 体力-疲劳(Banister / CTL-ATL-TSB 体系) ----------
@@ -259,6 +324,7 @@ export interface TrainingStatus {
   weekly: WeeklyLoadResult;
   estimatedSessions: number; // 用了估计 RPE 的训练日数
   totalSessions: number;
+  hr?: HrLoadStatus; // 心率负荷对照(数据来自 Google 同步,调用方有就带上)
 }
 
 // 默认 35 天窗口:28 天慢性池 + 7 天缓冲(EWMA 初值衰减)。

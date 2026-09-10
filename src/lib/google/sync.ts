@@ -10,6 +10,14 @@ import {
   type GoogleDailyMetricsInput,
 } from "@/lib/db";
 import { getValidAccessToken, listGoogleDataPoints, type GoogleDataPoint } from "./auth";
+import {
+  addExercisePoint,
+  dayAvgHr,
+  emptyExerciseDay,
+  exercisePointDate,
+  parseExercisePoint,
+  type ExerciseDayAgg,
+} from "./exercise-metrics";
 
 type MetricsPartial = Omit<GoogleDailyMetricsInput, "date">;
 type MetricsMap = Map<string, MetricsPartial>;
@@ -164,31 +172,34 @@ function parseWeightIntoMetrics(map: MetricsMap, rawByDate: Map<string, unknown[
   }
 }
 
+// 运动:除次数/时长外,补提手环运动记录的心率汇总(平均心率/四区停留秒数/卡路里),
+// 供心率负荷对照(见 docs/training-algorithms.md 心率小节);被动识别的会话没有
+// metricsSummary,这些字段保持 null,不当 0。先按日聚合再加权,平均心率才能算对。
 function parseExerciseIntoMetrics(map: MetricsMap, rawByDate: Map<string, unknown[]>, points: GoogleDataPoint[]) {
+  const byDate = new Map<string, ExerciseDayAgg>();
   for (const p of points) {
-    const ex = p.exercise as
-      | {
-          interval?: {
-            startTime?: string;
-            startUtcOffset?: unknown;
-            civilStartTime?: { date?: { year?: number; month?: number; day?: number } };
-          };
-          activeDuration?: unknown;
-        }
-      | undefined;
-    const date =
-      civilDateStr(ex?.interval?.civilStartTime?.date) ??
-      (ex?.interval?.startTime
-        ? localParts(ex.interval.startTime, parseOffsetSeconds(ex?.interval?.startUtcOffset)).date
-        : null);
-    if (!date) continue;
-    const seconds = parseFloat(String(ex?.activeDuration ?? "0")) || 0;
-    const prev = map.get(date);
-    mergeMetrics(map, date, {
-      exercise_count: (prev?.exercise_count ?? 0) + 1,
-      exercise_minutes: Math.round(((prev?.exercise_minutes ?? 0) + seconds / 60) * 10) / 10,
-    });
+    const parsed = parseExercisePoint(p);
+    const date = exercisePointDate(p);
+    if (!parsed || !date) continue;
+    let agg = byDate.get(date);
+    if (!agg) {
+      agg = emptyExerciseDay();
+      byDate.set(date, agg);
+    }
+    addExercisePoint(agg, parsed);
     pushRaw(rawByDate, "exercise", date, p);
+  }
+  for (const [date, agg] of byDate) {
+    mergeMetrics(map, date, {
+      exercise_count: agg.count,
+      exercise_minutes: agg.minutes,
+      exercise_avg_hr: dayAvgHr(agg),
+      exercise_zone_light_s: agg.zone.light || null,
+      exercise_zone_moderate_s: agg.zone.moderate || null,
+      exercise_zone_vigorous_s: agg.zone.vigorous || null,
+      exercise_zone_peak_s: agg.zone.peak || null,
+      exercise_calories: agg.caloriesCount > 0 ? Math.round(agg.caloriesSum) : null,
+    });
   }
 }
 
