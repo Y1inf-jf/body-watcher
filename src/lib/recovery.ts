@@ -176,14 +176,14 @@ export function computeRecoveryFeatures(
   // 基线池：除今天外、最近的 21 天样本。
   const pool = rowsAsc.slice(0, -1).slice(-21);
 
-  // HRV 优先用深睡期 rMSSD（更接近恢复信号），缺了退回全天均值。
+  // HRV 用整晚均值（与 Fitbit app 显示一致、样本足方差小），缺了退回深睡期 rMSSD。
   const hrvOf = (r: GoogleMetricRow): number | null =>
-    r.hrv_rmssd_deep_ms ?? r.hrv_avg_ms ?? null;
-  const hrvSource: "rmssd_deep" | "avg" | null =
-    today && today.hrv_rmssd_deep_ms != null
-      ? "rmssd_deep"
-      : today && today.hrv_avg_ms != null
-        ? "avg"
+    r.hrv_avg_ms ?? r.hrv_rmssd_deep_ms ?? null;
+  const hrvSource: "avg" | "rmssd_deep" | null =
+    today && today.hrv_avg_ms != null
+      ? "avg"
+      : today && today.hrv_rmssd_deep_ms != null
+        ? "rmssd_deep"
         : null;
 
   const hrvPool = pool.map(hrvOf).filter((v): v is number => v !== null);

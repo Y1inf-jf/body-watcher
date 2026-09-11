@@ -17,6 +17,7 @@ interface MetricsRow {
   sleep_rem_minutes?: number | null;
   sleep_bedtime?: string | null;
   sleep_wakeup?: string | null;
+  hrv_avg_ms?: number | null;
   hrv_rmssd_deep_ms?: number | null;
   resting_hr?: number | null;
   steps?: number | null;
@@ -328,7 +329,8 @@ export default function GoogleSyncPage() {
                 <th className="py-1.5 pr-3">在床</th>
                 <th className="py-1.5 pr-3">深睡</th>
                 <th className="py-1.5 pr-3">REM</th>
-                <th className="py-1.5 pr-3">HRV rMSSD</th>
+                <th className="py-1.5 pr-3">HRV均值</th>
+                <th className="py-1.5 pr-3">深睡RMSSD</th>
                 <th className="py-1.5 pr-3">静息心率</th>
                 <th className="py-1.5 pr-3">步数</th>
                 <th className="py-1.5 pr-3">体重kg</th>
@@ -343,6 +345,7 @@ export default function GoogleSyncPage() {
                   <td className="py-1.5 pr-3">{fmtDuration(m.sleep_in_bed_minutes)}</td>
                   <td className="py-1.5 pr-3">{fmtDuration(m.sleep_deep_minutes)}</td>
                   <td className="py-1.5 pr-3">{fmtDuration(m.sleep_rem_minutes)}</td>
+                  <td className="py-1.5 pr-3">{m.hrv_avg_ms ?? "—"}</td>
                   <td className="py-1.5 pr-3">{m.hrv_rmssd_deep_ms ?? "—"}</td>
                   <td className="py-1.5 pr-3">{m.resting_hr ?? "—"}</td>
                   <td className="py-1.5 pr-3">{m.steps ?? "—"}</td>

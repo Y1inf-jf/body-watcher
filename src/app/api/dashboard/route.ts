@@ -81,7 +81,8 @@ export async function GET() {
   for (const g of googleRows) {
     byDate.set(g.date, {
       date: g.date.slice(5),
-      hrv: g.hrv_rmssd_deep_ms ?? g.hrv_avg_ms ?? null,
+      // 整晚均值口径，与 Fitbit app 显示一致；深睡期 RMSSD 只作缺省兜底。
+      hrv: g.hrv_avg_ms ?? g.hrv_rmssd_deep_ms ?? null,
       resting_hr: g.resting_hr ?? null,
       sleep_in_bed: g.sleep_in_bed_minutes != null ? Math.round((g.sleep_in_bed_minutes / 60) * 10) / 10 : null,
       sleep_asleep:
