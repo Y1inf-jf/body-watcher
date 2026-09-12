@@ -230,6 +230,15 @@ import { clearLoginFailures, recordLoginFailure, resetLoginThrottle, throttleRem
   check("登录成功清零 → 立即解除", throttleRemainingMs("1.1.1.1", T0 + 46_000) === 0);
   check("清零后计数从头算", recordLoginFailure("1.1.1.1", T0 + 47_000) === 0);
 
+  // 累积语义:锁定解除后再失败一次,会按同一档重新计时(而不是回到"免费 3 次")
+  resetLoginThrottle();
+  recordLoginFailure("4.4.4.4", T0);
+  recordLoginFailure("4.4.4.4", T0 + 1000);
+  check("第3次失败锁 30s", recordLoginFailure("4.4.4.4", T0 + 2000) === 30_000);
+  check("窗口刚过时可再试", throttleRemainingMs("4.4.4.4", T0 + 2000 + 30_000) === 0);
+  check("再失败一次仍按 30s 档重新计时", recordLoginFailure("4.4.4.4", T0 + 2000 + 31_000) === 30_000);
+  check("计数未清零(重新进入锁定)", throttleRemainingMs("4.4.4.4", T0 + 2000 + 32_000) > 0);
+
   // TTL:锁定已过 + 一小时无失败 → 记录被清理,计数重置(而非累加到 5 次触发长锁)
   resetLoginThrottle();
   recordLoginFailure("3.3.3.3", T0);
