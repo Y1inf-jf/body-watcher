@@ -190,9 +190,10 @@ body-watcher/
 │   ├── training-algorithms.md    # algorithm study notes (Chinese)
 │   ├── google-health-spike.md    # Google Health API integration log (Chinese)
 │   └── privacy-policy.md         # privacy notes (Chinese)
+├── tests/
+│   └── regression.test.mts       # regression tests (node:test, run via npm test)
 ├── scripts/
-│   ├── seed-wger.ts              # pull the wger exercise library (one-off)
-│   └── verify-readiness.mts      # recovery/readiness regression script (run with npx -y tsx)
+│   └── seed-wger.ts              # pull the wger exercise library (one-off)
 ├── data/                         # SQLite database (gitignored)
 └── .env.example
 ```
@@ -207,7 +208,8 @@ body-watcher/
 | `npm start` | Start production server |
 | `npm run lint` | Run ESLint |
 | `npm run seed:wger` | Pull wger exercise library (idempotent) |
-| `npx -y tsx scripts/verify-readiness.mts` | Run the recovery/readiness regression script (manual) |
+| `npm test` | Run the regression tests (Node's built-in `node:test`, 40 cases / 52 assertions) |
+| `npm run check` | Type check + lint + tests (one-shot pre-commit gate) |
 
 ## Acknowledgements
 

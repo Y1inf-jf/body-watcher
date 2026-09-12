@@ -186,9 +186,10 @@ body-watcher/
 │   ├── training-algorithms.md    # 恢复与训练状态算法笔记（推荐阅读）
 │   ├── google-health-spike.md    # Google Health API 接入记录
 │   └── privacy-policy.md         # 隐私说明
+├── tests/
+│   └── regression.test.mts       # 回归测试（node:test，npm test 运行）
 ├── scripts/
-│   ├── seed-wger.ts              # 拉取 wger 动作库（一次性）
-│   └── verify-readiness.mts      # 恢复/建议算法回归脚本（npx -y tsx 运行）
+│   └── seed-wger.ts              # 拉取 wger 动作库（一次性）
 ├── data/                         # SQLite 数据库（.gitignore）
 └── .env.example
 ```
@@ -202,7 +203,8 @@ body-watcher/
 | `npm start` | 启动生产服务器 |
 | `npm run lint` | 运行 ESLint |
 | `npm run seed:wger` | 从 wger 拉取动作库到本地（一次性，可重跑） |
-| `npx -y tsx scripts/verify-readiness.mts` | 恢复/建议算法回归脚本（手动运行） |
+| `npm test` | 跑回归测试（Node 内置 `node:test`，40 个用例 / 52 条断言） |
+| `npm run check` | 类型检查 + lint + 测试（提交前一键自检） |
 
 ## 致谢
 
