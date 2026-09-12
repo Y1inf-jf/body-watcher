@@ -18,8 +18,10 @@ export async function register() {
     if (!isGoogleConfigured()) return Promise.resolve();
     return runSync().catch((err) => console.error("[google-sync]", err instanceof Error ? err.message : err));
   };
+  // 同 syncGoogle:必须返回 promise,否则 Promise.allSettled 不会等它,
+  // 洞察会在训记数据落库前重算(用旧训练数据),要等下一个小时级定时器才自愈。
   const syncXunji = () => {
-    import("@/lib/xunji")
+    return import("@/lib/xunji")
       .then((m) => m.runXunjiSync({ days: 7 }))
       .catch((err) => console.error("[xunji-sync]", err instanceof Error ? err.message : err));
   };

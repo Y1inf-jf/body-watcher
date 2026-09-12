@@ -55,6 +55,24 @@ export default function RecoveryScoreCard({
   const minTarget = features.targets.minMinutes;
   const refIsTarget = minTarget !== null && (sleep.avgAsleep7d === null || minTarget > sleep.avgAsleep7d);
 
+  // 分值构成按实际参与项渲染:某信号缺数据时权重会重分配,静态的"40/30/30"在那一天就是错的。
+  const SIGNAL_LABELS = [
+    ["hrv", "HRV"],
+    ["restingHr", "静息心率"],
+    ["sleep", "睡眠"],
+  ] as const;
+  const usedParts: string[] = [];
+  const droppedParts: string[] = [];
+  for (const [key, label] of SIGNAL_LABELS) {
+    const c = score.components[key];
+    if (c.weightUsed != null) usedParts.push(`${label} ${Math.round(c.weightUsed * 100)}%`);
+    else if (score.score !== null && c.z === null) droppedParts.push(label);
+  }
+  const formula =
+    score.score !== null && usedParts.length > 0
+      ? `${usedParts.join(" + ")}${droppedParts.length > 0 ? `（${droppedParts.join("/")}今日无数据，未计入）` : ""}`
+      : "40% HRV + 30% 静息心率 + 30% 睡眠";
+
   return (
     <Card glowColor={zone?.hex} className="animate-fade-up p-5">
       <CardTitle
@@ -96,17 +114,25 @@ export default function RecoveryScoreCard({
         <div className="min-w-0 flex-1">
           <SignalRow
             label="HRV"
-            value={hrv.value != null ? `${hrv.value} ms` : "—"}
-            sub={hrv.ready ? `${fmtZ(hrv.zScore)} · 基线 ${hrv.baselineMean ?? "—"}` : "基线累计中"}
+            value={hrv.value != null ? `${hrv.value} ms` : "今日无数据"}
+            sub={
+              !hrv.ready
+                ? "基线累计中"
+                : hrv.value == null
+                  ? `基线 ${hrv.baselineMean ?? "—"} · 今日未计入`
+                  : `${fmtZ(hrv.zScore)} · 基线 ${hrv.baselineMean ?? "—"}`
+            }
             warn={hrv.ready && hrv.zScore !== null && hrv.zScore <= -1}
           />
           <SignalRow
             label="静息心率"
-            value={restingHr.value != null ? `${restingHr.value} bpm` : "—"}
+            value={restingHr.value != null ? `${restingHr.value} bpm` : "今日无数据"}
             sub={
               restingHr.deviationBpm != null
                 ? `${restingHr.deviationBpm > 0 ? "+" : ""}${restingHr.deviationBpm} bpm · 基线 ${restingHr.baselineMean ?? "—"}`
-                : "基线累计中"
+                : restingHr.value == null && restingHr.ready
+                  ? `基线 ${restingHr.baselineMean ?? "—"} · 今日未计入`
+                  : "基线累计中"
             }
             warn={restingHr.deviationBpm != null && restingHr.deviationBpm >= 5}
           />
@@ -135,7 +161,7 @@ export default function RecoveryScoreCard({
             }
           />
           <p className="mt-2 text-[10px] text-zinc-600">
-            50 = 你的正常水平 · 40% HRV + 30% 静息心率 + 30% 睡眠
+            50 = 你的正常水平 · {formula}
           </p>
         </div>
       </div>
