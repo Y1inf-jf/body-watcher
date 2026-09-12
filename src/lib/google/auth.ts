@@ -33,9 +33,20 @@ function proxyDispatcher(): ProxyAgent | undefined {
 
 type UndiciInit = Parameters<typeof undiciFetch>[1];
 
+// 出站超时:对 Google 的请求统一 30s 上限。
+// 没有它时,隧道半开或代理卡住会让请求一直挂着——runSync 的并发护栏是"共享同一次进行中的
+// 同步"而非"超时放弃",一旦挂死就再也不会自愈,小时级定时器等于失效,只能重启进程。
+// LLM 侧本来就有超时(testLlmConnection 20s / agentLoop 180s),这里补齐同样的保护。
+const GOOGLE_TIMEOUT_MS = 30_000;
+
 // 统一出口：对 Google 的所有 HTTP 都走这里。
 export async function googleFetch(url: string | URL, init: UndiciInit = {}): Promise<Response> {
-  const res = await undiciFetch(url, { ...init, dispatcher: proxyDispatcher() });
+  const res = await undiciFetch(url, {
+    ...init,
+    dispatcher: proxyDispatcher(),
+    // 调用方显式传了 signal 就尊重它(上游取消),否则套默认超时。
+    signal: init.signal ?? AbortSignal.timeout(GOOGLE_TIMEOUT_MS),
+  });
   return res as unknown as Response;
 }
 

@@ -65,6 +65,10 @@ interface RawTrain {
   movements?: RawMovement[];
 }
 
+// 出站超时 30s:与 Google 侧一致。没有它时单次请求挂住会一直阻塞,
+// 而 runXunjiSync 的 _running 护栏是"共享同一次同步"而非"超时放弃",挂死即不再自愈。
+const FETCH_TIMEOUT_MS = 30_000;
+
 async function fetchTrainDate(datestr: string): Promise<RawTrain[]> {
   const res = await fetch(`${API_BASE}/api_trains_for_llm_v2`, {
     method: "POST",
@@ -74,6 +78,7 @@ async function fetchTrainDate(datestr: string): Promise<RawTrain[]> {
       "accept-encoding": "gzip",
     },
     body: JSON.stringify({ schema_version: SCHEMA_VERSION, datestr, include_full_data: true }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (res.status === 401) throw new Error("训记 API Key 无效(401)");
   if (res.status === 429) throw new Error("训记接口限流(429),稍后再试");
