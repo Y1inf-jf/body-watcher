@@ -1,4 +1,5 @@
-// 恢复/合成建议的回归验证脚本(手动运行,无测试框架依赖): npx -y tsx scripts/verify-readiness.mts
+// 项目回归验证脚本(手动运行,无测试框架依赖): npx -y tsx scripts/verify-readiness.mts
+// 覆盖:恢复分/睡眠债口径、训练状态与合成建议、LLM 配置合并优先级、登录失败限流。
 import { computeRecoveryFeatures, computeRecoveryScore, localDaysAgo } from "../src/lib/recovery";
 import { computeTrainingStatus, computeSleepNeed } from "../src/lib/training-status";
 import { computeReadiness } from "../src/lib/readiness";
@@ -201,6 +202,45 @@ import { resolveLlmFrom } from "../src/lib/llm";
   const r3 = resolveLlmFrom({ model: "glm-4.6", baseUrl: null, apiKey: "sk-db" }, { LLM_MODEL: "deepseek-v3", LLM_API_KEY: "sk-env" });
   check("DB 逐项覆盖 env", r3.model === "glm-4.6" && r3.apiKey === "sk-db" && r3.source.apiKey === "db", r3);
   check("未设的 baseUrl 各自回落", r3.source.baseUrl === "default" && r3.baseUrl.startsWith("https://dashscope"), r3.source);
+}
+
+// ---------- 6. 登录失败限流(递进退避) ----------
+console.log("[登录限流]");
+import { clearLoginFailures, recordLoginFailure, resetLoginThrottle, throttleRemainingMs } from "../src/lib/login-throttle";
+{
+  const T0 = 1_700_000_000_000;
+  const MIN = 60_000;
+  resetLoginThrottle();
+
+  check("无记录 → 不限流", throttleRemainingMs("1.1.1.1", T0) === 0);
+  check("第1次失败不触发阶梯", recordLoginFailure("1.1.1.1", T0) === 0);
+  check("第2次失败不触发阶梯", recordLoginFailure("1.1.1.1", T0 + 1000) === 0);
+  check("第3次失败 → 锁 30 秒", recordLoginFailure("1.1.1.1", T0 + 2000) === 30_000);
+  check("锁定期内剩余 > 0", throttleRemainingMs("1.1.1.1", T0 + 3000) > 0);
+  check("窗口过后自动解除", throttleRemainingMs("1.1.1.1", T0 + 2000 + 30_000) === 0);
+
+  recordLoginFailure("1.1.1.1", T0 + 40_000); // 第4次
+  check("第5次失败 → 升级为 5 分钟", recordLoginFailure("1.1.1.1", T0 + 41_000) === 5 * MIN);
+  recordLoginFailure("1.1.1.1", T0 + 42_000); // 第6次
+  recordLoginFailure("1.1.1.1", T0 + 43_000); // 第7次
+  check("第8次失败 → 升级为 30 分钟", recordLoginFailure("1.1.1.1", T0 + 44_000) === 30 * MIN);
+  check("其他 IP 不受牵连", throttleRemainingMs("2.2.2.2", T0 + 45_000) === 0);
+
+  clearLoginFailures("1.1.1.1");
+  check("登录成功清零 → 立即解除", throttleRemainingMs("1.1.1.1", T0 + 46_000) === 0);
+  check("清零后计数从头算", recordLoginFailure("1.1.1.1", T0 + 47_000) === 0);
+
+  // TTL:锁定已过 + 一小时无失败 → 记录被清理,计数重置(而非累加到 5 次触发长锁)
+  resetLoginThrottle();
+  recordLoginFailure("3.3.3.3", T0);
+  recordLoginFailure("3.3.3.3", T0 + 1000);
+  recordLoginFailure("3.3.3.3", T0 + 2000); // 触发 30s 锁
+  const later = T0 + 2000 + 60 * MIN + 1000;
+  const w1 = recordLoginFailure("3.3.3.3", later);
+  const w2 = recordLoginFailure("3.3.3.3", later + 1000);
+  const w3 = recordLoginFailure("3.3.3.3", later + 2000);
+  check("TTL 过期后计数重置(仍是第3次才锁 30s)", w1 === 0 && w2 === 0 && w3 === 30_000, [w1, w2, w3]);
+  resetLoginThrottle();
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
