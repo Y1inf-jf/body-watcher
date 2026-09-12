@@ -25,11 +25,18 @@ export async function register() {
       .then((m) => m.runXunjiSync({ days: 7 }))
       .catch((err) => console.error("[xunji-sync]", err instanceof Error ? err.message : err));
   };
-  // 洞察在数据落库后才有意义;失败只记日志,不影响同步本身。
-  const recomputeInsights = () => {
-    import("@/lib/insights")
-      .then((m) => m.computeInsights())
-      .catch((err) => console.error("[insights]", err instanceof Error ? err.message : err));
+  // 数据落库后:先日结(落档今日建议 + 恢复快照),再重算洞察。失败只记日志,不影响同步本身。
+  // 三者共用同一份上下文(loadDailyContext),同一轮不重复查询与计算。
+  // 快照与日建议原本只在打开总览页时写——没开页面的日子会在月报里留空洞、建议回填链断裂,
+  // 所以这里必须和总览页一样落一次(都按日期 upsert,同日重复调用幂等)。
+  const settleAndRecompute = () => {
+    import("@/lib/daily-context")
+      .then((m) => {
+        const ctx = m.loadDailyContext();
+        m.settleDaily(ctx);
+        return import("@/lib/insights").then((ins) => ins.computeInsights(ctx));
+      })
+      .catch((err) => console.error("[daily-settle]", err instanceof Error ? err.message : err));
   };
 
   // 启动稍等片刻再同步，避免拖慢服务就绪；失败只记日志（详情在 google_sync_log / 状态页）。
@@ -37,13 +44,13 @@ export async function register() {
     import("@/lib/db")
       .then((m) => m.markInterruptedSyncLogs())
       .catch(() => {});
-    Promise.allSettled([syncGoogle(), syncXunji()]).then(() => recomputeInsights());
+    Promise.allSettled([syncGoogle(), syncXunji()]).then(() => settleAndRecompute());
   }, 5000).unref();
 
   if (Number.isFinite(minutes) && minutes > 0) {
     setInterval(() => {
       // 训记也进小时级:fetch_log 幂等限流,长开的服务才能在当天拉到新练的课。
-      Promise.allSettled([syncGoogle(), syncXunji()]).then(() => recomputeInsights());
+      Promise.allSettled([syncGoogle(), syncXunji()]).then(() => settleAndRecompute());
     }, minutes * 60_000).unref();
   }
 }

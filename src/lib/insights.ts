@@ -1,23 +1,8 @@
 // 主动洞察规则引擎:每次数据同步完成后跑一遍(scheduling 在 instrumentation.ts),
 // 命中的规则按 (rule_id, date) 去重落库,总览页横幅展示。原则:数据不新鲜/基线不足不点火,
 // 宁缺毋滥——洞察比推送廉价,噪音会训练用户无视横幅。
-import {
-  queryHealthMetrics,
-  queryGoogleDailyMetricsRange,
-  queryTrainingHistoryDetailed,
-  getSleepTargets,
-  countStalePendingAdvice,
-  upsertInsight,
-  clearInsight,
-} from "./db";
-import {
-  computeRecoveryFeatures,
-  localToday,
-  type GoogleMetricRow,
-  type TrainingLogRow,
-} from "./recovery";
-import { computeTrainingStatus } from "./training-status";
-import { mergeManualHealth } from "./health-merge";
+import { clearInsight, countStalePendingAdvice, upsertInsight } from "./db";
+import { loadDailyContext, type DailyContext } from "./daily-context";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -25,17 +10,18 @@ function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(to) - Date.parse(from)) / DAY_MS);
 }
 
-export function computeInsights(): void {
-  const today = localToday();
-
-  // 与 dashboard 同口径:设备数据 + 手动补缺 + 用户睡眠目标。
-  const googleRows = queryGoogleDailyMetricsRange(30) as GoogleMetricRow[];
-  const manual = queryHealthMetrics(30) as Record<string, unknown>[];
-  const merged = mergeManualHealth(googleRows, manual);
-  const sleepTargets = getSleepTargets();
-  const features = computeRecoveryFeatures(merged, { sleepTargets });
-  const logs = queryTrainingHistoryDetailed(35) as TrainingLogRow[];
-  const status = computeTrainingStatus(logs);
+/**
+ * 计算并落库今日洞察。
+ *
+ * ctx 可选:同步流程已经算过一份上下文时直接传进来,避免同一轮重复查询与计算;
+ * 不传则内部按统一口径现算一份(见 lib/daily-context.ts)。
+ */
+export function computeInsights(ctx?: DailyContext): void {
+  const context = ctx ?? loadDailyContext();
+  const today = context.today;
+  // 与 dashboard 同源:设备数据 + 手动补缺 + 用户睡眠目标。
+  const features = context.recoveryFeatures;
+  const status = context.trainingStatus;
   // 设备数据今天/昨天才算新鲜:陈旧数据上点火只会误导。
   const fresh = (features.staleDays ?? 99) <= 1;
 
@@ -73,7 +59,7 @@ export function computeInsights(): void {
   }
 
   // 4. 停训空窗:有训练史但已 ≥5 天没练(排出今天数据未同步的情况无影响,训练记录是本地落库)。
-  const lastDate = logs.length > 0 ? String(logs[0].date) : null;
+  const lastDate = context.lastSessionDate;
   if (lastDate) {
     const gap = daysBetween(lastDate, today);
     if (gap >= 5) {
