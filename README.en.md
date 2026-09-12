@@ -120,7 +120,10 @@ Single-user tool, but it **ships with a site-wide login wall**, so it is safe to
   Web Crypto only (so it behaves identically in the Edge proxy and Node routes), verified with a
   constant-time comparison. The password itself is never stored in the cookie; `.env` holds only a scrypt hash.
 - **Login throttling**: graduated backoff per client IP — 3 failures lock for 30s, 5 for 5 minutes,
-  8 for 30 minutes; a successful login resets the counter. While locked it returns 429 + `Retry-After`
+  8 for 30 minutes. The counter is **cumulative** and only resets on a successful login or after an
+  hour with no failures; once you reach a tier, every further failure re-arms that tier's timer
+  (it is *not* "lock once, then get free attempts again") — otherwise an attacker would regain three
+  free tries each round and never reach the longer tiers. While locked it returns 429 + `Retry-After`
   and **skips scrypt entirely** (otherwise the limiter itself becomes a CPU amplifier). The key is the
   `X-Real-IP` header injected by nginx: this project's `X-Forwarded-For` uses append semantics, so its
   leftmost value is client-supplied and spoofable — keying on it would mean no throttling at all.
