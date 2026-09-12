@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "npx -y tsx --test tests/*.test.mts",
+    "check": "tsc --noEmit && npm run lint && npm test",
     "seed:wger": "node --experimental-strip-types scripts/seed-wger.ts"
   },
   "dependencies": {
