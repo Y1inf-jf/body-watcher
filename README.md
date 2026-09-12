@@ -68,6 +68,11 @@ npm install
 | `GOOGLE_REDIRECT_URI` | 可选，默认 `http://localhost:3000/api/google/callback` |
 | `XUNJI_API_KEY` | 训记 App 内申请的 Open API Key |
 | `GOOGLE_SYNC_INTERVAL_MINUTES` | 自动同步间隔，默认 60，0 关闭 |
+| `AUTH_PASSWORD_HASH` | **登录必需**。口令的 scrypt 哈希，生成方式见 `.env.example`（分隔符必须用 `:`，不能用 `$`） |
+| `SESSION_SECRET` | **登录必需**。会话 cookie 的 HMAC 签名密钥，随机 32 字节 hex |
+
+> `LLM_API_KEY` 也可在 `/settings` 页面配置，存入数据库 `app_settings` 表（生效优先级 DB > `.env` > 内置默认）；
+> 该接口只回掩码、不回明文。
 
 ### 3. 接入 Google Health
 
@@ -101,17 +106,23 @@ npm run dev
 | 前端 | React 19, TypeScript 5, Tailwind CSS 4, Geist 字体, lucide-react |
 | 图表 | Recharts 3（渐变面积图） |
 | 数据库 | better-sqlite3（本地 SQLite，WAL 模式） |
-| AI | 任意 OpenAI 兼容 API（AI SDK v6 函数调用 + SSE 流式），默认阿里云百炼 `qwen3.8-flash` |
+| AI | 任意 OpenAI 兼容 API（AI SDK v6 函数调用 + 纯文本流式），默认阿里云百炼 `qwen3.8-flash` |
 | Google 同步 | Google Health API v4 + OAuth2，undici ProxyAgent 按请求代理 |
 | 动作数据 | [wger](https://wger.de) 开源动作数据库 |
 
-## ⚠️ 部署约束（重要）
+## 🔒 鉴权与部署
 
-本项目设计为**单用户本地工具**，未实现任何鉴权：
+单用户工具，但**内置全站登录墙**，可以安全地暴露到公网：
 
-- 所有 API 路由、数据库均**无用户隔离与身份校验**
-- 各类密钥仅存在本地 `.env`（已 gitignore）
-- **请勿直接暴露到公网或局域网**。如需远程访问，请自行在前面加反向代理 + 鉴权层
+- **登录墙**：`src/proxy.ts`（Next 16 起 Middleware 更名为 Proxy）拦截所有页面与 API——
+  未登录时页面 302 跳 `/login`，API 返回 401 JSON；仅 `/login`、`/api/auth/login`、`/api/auth/logout` 放行。
+- **会话**：`bw_session` cookie = `<过期时间戳>.<HMAC-SHA256 签名>`，无状态，只用 Web Crypto 实现
+  （保证 Edge 与 Node 路由行为一致），校验走固定耗时比较。口令本身不落 cookie，`.env` 里只存 scrypt 哈希。
+- **密钥**只存在于 `.env`（已 gitignore），不入库、不入 git。数据库是单文件 SQLite。
+- **仍是单用户模型**：没有多租户隔离，也没有行级权限——这是刻意的取舍，不是遗漏。
+
+> ⚠️ 通过公网访问时请放在 HTTPS 之后，并打开登录 cookie 的 `Secure` 标志
+> （见 `src/app/api/auth/login/route.ts` 内注释）。明文 HTTP 下会话 cookie 可被中间人窃取。
 
 ## 数据存储
 
@@ -121,6 +132,12 @@ npm run dev
 - `training_log` / `training_exercise` —— 训练记录与动作明细（`source` 区分 xunji 镜像 / 手动录入）
 - `xunji_fetch_log` —— 训记按日拉取记录（礼貌限流）
 - `daily_health` / `training_plan` / `training_template` / `exercise_library` —— 手动健康指标、AI 计划、模板、wger 动作库
+- `advice_log` —— 日建议与计划建议，含采纳状态与体感回填（建议闭环）
+- `recovery_snapshots` —— 每日恢复分快照，阶段复盘的输入（由同步流程与总览页共同落档）
+- `insights` —— 主动洞察规则命中记录，按 `(rule_id, date)` 去重
+- `coach_notes` —— 教练长期笔记（含硬约束标记与有效期）
+- `chat_sessions` / `chat_messages` —— 教练对话历史
+- `period_reports` / `app_settings` —— 阶段报告存档、设置项（含 LLM 配置覆盖）
 
 可通过 `/api/export` 导出全部数据。
 
@@ -133,10 +150,13 @@ body-watcher/
 │   │   ├── api/
 │   │   │   ├── google/           # OAuth 授权/回调/同步/状态/断开
 │   │   │   ├── xunji/            # 训记同步触发与状态
-│   │   │   ├── agent/            # AI Agent 流式接口（SSE）
-│   │   │   └── ...               # dashboard / training / plans / stats / export 等
+│   │   │   ├── agent/            # AI Agent 流式接口（纯文本流）
+│   │   │   ├── auth/             # 登录 / 登出
+│   │   │   └── ...               # dashboard / training / plans / advice / stats / export 等
+│   │   ├── login/page.tsx        # 登录页
 │   │   ├── google/page.tsx       # 数据同步页（连接/同步状态/7 天指标）
 │   │   ├── plan/page.tsx         # 训练计划页（恢复分析 / 生成计划 / 历史）
+│   │   ├── settings/page.tsx     # 设置页（个人档案 / 睡眠目标 / LLM 配置）
 │   │   └── page.tsx              # 看板首页（恢复分 + 训练状态圆环仪表）
 │   ├── components/
 │   │   ├── ui/                   # Card / GaugeRing 等基础组件
@@ -145,15 +165,22 @@ body-watcher/
 │   │   ├── google/               # Google Health 客户端 / OAuth / 同步解析
 │   │   ├── recovery.ts           # 恢复特征 + 恢复分（纯函数）
 │   │   ├── training-status.ts    # 负荷 / ACWR / Form / 单调性（纯函数）
+│   │   ├── readiness.ts          # 恢复 × 负荷 → 今日练休结论（纯函数）
+│   │   ├── daily-context.ts      # 单一口径入口 + 日结（总览/洞察/教练工具共用）
+│   │   ├── insights.ts           # 主动洞察规则引擎
 │   │   ├── xunji.ts              # 训记 API 客户端与镜像
 │   │   ├── agent.ts              # Agent 工具与系统提示词
 │   │   ├── db.ts                 # SQLite 数据访问层
 │   │   └── llm.ts                # LLM Agent 循环（函数调用 + 流式）
-│   └── instrumentation.ts        # 启动 + 每小时自动同步
+│   ├── proxy.ts                  # 全站登录墙（Next 16 起 Middleware 更名为 Proxy）
+│   └── instrumentation.ts        # 启动 + 每小时同步 → 日结 → 重算洞察
 ├── docs/
 │   ├── training-algorithms.md    # 恢复与训练状态算法笔记（推荐阅读）
-│   └── google-health-spike.md    # Google Health API 接入记录
-├── scripts/                      # seed-wger 等脚本
+│   ├── google-health-spike.md    # Google Health API 接入记录
+│   └── privacy-policy.md         # 隐私说明
+├── scripts/
+│   ├── seed-wger.ts              # 拉取 wger 动作库（一次性）
+│   └── verify-readiness.mts      # 恢复/建议算法回归脚本（npx -y tsx 运行）
 ├── data/                         # SQLite 数据库（.gitignore）
 └── .env.example
 ```
@@ -167,6 +194,7 @@ body-watcher/
 | `npm start` | 启动生产服务器 |
 | `npm run lint` | 运行 ESLint |
 | `npm run seed:wger` | 从 wger 拉取动作库到本地（一次性，可重跑） |
+| `npx -y tsx scripts/verify-readiness.mts` | 恢复/建议算法回归脚本（手动运行） |
 
 ## 致谢
 

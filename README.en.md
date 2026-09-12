@@ -68,6 +68,10 @@ Copy `.env.example` to `.env`:
 | `GOOGLE_REDIRECT_URI` | Optional, defaults to `http://localhost:3000/api/google/callback` |
 | `XUNJI_API_KEY` | XunJi app Open API key |
 | `GOOGLE_SYNC_INTERVAL_MINUTES` | Sync interval, default 60, 0 disables |
+| `AUTH_PASSWORD_HASH` | **Required for login.** scrypt hash of the password; see `.env.example` (use `:` as separator, not `$`) |
+| `SESSION_SECRET` | **Required for login.** HMAC signing key for the session cookie; 32 random bytes in hex |
+
+> `LLM_API_KEY` can also be configured on the `/settings` page (stored in the `app_settings` table; precedence DB > `.env` > built-in default). The GET endpoint returns a masked value only.
 
 ### 3. Connect Google Health
 
@@ -101,17 +105,26 @@ Open [http://localhost:3000](http://localhost:3000). Trigger a XunJi backfill on
 | Frontend | React 19, TypeScript 5, Tailwind CSS 4, Geist fonts, lucide-react |
 | Charts | Recharts 3 (gradient area charts) |
 | Database | better-sqlite3 (local SQLite, WAL mode) |
-| AI | Any OpenAI-compatible API (AI SDK v6 function calling + SSE streaming), Bailian `qwen3.8-flash` by default |
+| AI | Any OpenAI-compatible API (AI SDK v6 function calling + plain-text streaming), Bailian `qwen3.8-flash` by default |
 | Google sync | Google Health API v4 + OAuth2, per-request undici ProxyAgent |
 | Exercise data | [wger](https://wger.de) open exercise database |
 
-## ⚠️ Deployment Constraints (Important)
+## 🔒 Authentication & Deployment
 
-This project is designed as a **single-user local tool with no authentication**:
+Single-user tool, but it **ships with a site-wide login wall**, so it is safe to expose publicly:
 
-- All API routes and the database have **no user isolation or identity checks**
-- Secrets live only in the local `.env` (gitignored)
-- **Do not expose it to the public internet or a LAN**. Put a reverse proxy with an auth layer in front if you need remote access
+- **Login wall**: `src/proxy.ts` (Middleware was renamed to Proxy in Next 16) guards every page and API route —
+  unauthenticated page requests get a 302 to `/login`, API requests get a 401 JSON response. Only
+  `/login`, `/api/auth/login` and `/api/auth/logout` are public.
+- **Sessions**: the `bw_session` cookie is `<expiry-timestamp>.<HMAC-SHA256 signature>` — stateless, built on
+  Web Crypto only (so it behaves identically in the Edge proxy and Node routes), verified with a
+  constant-time comparison. The password itself is never stored in the cookie; `.env` holds only a scrypt hash.
+- **Secrets** live only in `.env` (gitignored) — never in the database or in git. The database is a single SQLite file.
+- **Still single-user by design**: no multi-tenant isolation and no row-level permissions. That is a deliberate
+  trade-off, not an oversight.
+
+> ⚠️ When exposing it publicly, put it behind HTTPS and enable the `Secure` flag on the login cookie
+> (see the comment in `src/app/api/auth/login/route.ts`). Over plain HTTP the session cookie can be intercepted.
 
 ## Data Storage
 
@@ -121,6 +134,12 @@ All data lives in `data/body-watcher.db` (SQLite, gitignored). Main tables:
 - `training_log` / `training_exercise` — workouts and exercise details (`source` distinguishes xunji mirror vs manual)
 - `xunji_fetch_log` — per-date fetch log for polite rate limiting
 - `daily_health` / `training_plan` / `training_template` / `exercise_library` — manual metrics, AI plans, templates, wger library
+- `advice_log` — daily and plan advice, including follow-through status and felt-RPE feedback (the advice loop)
+- `recovery_snapshots` — one recovery snapshot per day, input for period reviews (written by both the sync job and the dashboard)
+- `insights` — fired proactive insight rules, deduped by `(rule_id, date)`
+- `coach_notes` — long-term coach notes (hard-constraint flag and expiry)
+- `chat_sessions` / `chat_messages` — coach conversation history
+- `period_reports` / `app_settings` — saved period reports and settings (including LLM config overrides)
 
 Export everything via `/api/export`.
 
@@ -133,10 +152,13 @@ body-watcher/
 │   │   ├── api/
 │   │   │   ├── google/           # OAuth auth/callback/sync/status/disconnect
 │   │   │   ├── xunji/            # XunJi sync trigger & status
-│   │   │   ├── agent/            # AI agent streaming endpoint (SSE)
-│   │   │   └── ...               # dashboard / training / plans / stats / export
+│   │   │   ├── agent/            # AI agent streaming endpoint (plain text)
+│   │   │   ├── auth/             # login / logout
+│   │   │   └── ...               # dashboard / training / plans / advice / stats / export
+│   │   ├── login/page.tsx        # Login page
 │   │   ├── google/page.tsx       # Sync page (connect / status / 7-day metrics)
 │   │   ├── plan/page.tsx         # Plan page (recovery analysis / generation / history)
+│   │   ├── settings/page.tsx     # Settings (profile / sleep targets / LLM config)
 │   │   └── page.tsx              # Dashboard (recovery + training-status gauge rings)
 │   ├── components/
 │   │   ├── ui/                   # Card / GaugeRing primitives
@@ -145,15 +167,22 @@ body-watcher/
 │   │   ├── google/               # Google Health client / OAuth / sync parsing
 │   │   ├── recovery.ts           # recovery features + score (pure functions)
 │   │   ├── training-status.ts    # load / ACWR / Form / monotony (pure functions)
+│   │   ├── readiness.ts          # recovery × load → today's train/rest verdict (pure)
+│   │   ├── daily-context.ts      # single source of truth + daily settle (dashboard/insights/coach)
+│   │   ├── insights.ts           # proactive insight rule engine
 │   │   ├── xunji.ts              # XunJi API client & mirror
 │   │   ├── agent.ts              # agent tools & system prompts
 │   │   ├── db.ts                 # SQLite data layer
 │   │   └── llm.ts                # LLM agent loop (function calling + streaming)
-│   └── instrumentation.ts        # startup + hourly auto sync
+│   ├── proxy.ts                  # site-wide login wall (Middleware renamed to Proxy in Next 16)
+│   └── instrumentation.ts        # startup + hourly sync → daily settle → recompute insights
 ├── docs/
 │   ├── training-algorithms.md    # algorithm study notes (Chinese)
-│   └── google-health-spike.md    # Google Health API integration log (Chinese)
-├── scripts/                      # seed-wger and friends
+│   ├── google-health-spike.md    # Google Health API integration log (Chinese)
+│   └── privacy-policy.md         # privacy notes (Chinese)
+├── scripts/
+│   ├── seed-wger.ts              # pull the wger exercise library (one-off)
+│   └── verify-readiness.mts      # recovery/readiness regression script (run with npx -y tsx)
 ├── data/                         # SQLite database (gitignored)
 └── .env.example
 ```
@@ -168,6 +197,7 @@ body-watcher/
 | `npm start` | Start production server |
 | `npm run lint` | Run ESLint |
 | `npm run seed:wger` | Pull wger exercise library (idempotent) |
+| `npx -y tsx scripts/verify-readiness.mts` | Run the recovery/readiness regression script (manual) |
 
 ## Acknowledgements
 
