@@ -8,9 +8,9 @@ import {
 import { loadDailyContext, settleDaily } from "@/lib/daily-context";
 
 export async function GET() {
-  // 单一口径:派生结果由 lib/daily-context.ts 统一计算,与洞察规则、日结共用,
-  // 避免多处各自拼装导致窗口天数/合并规则漂移。withHr 只在总览页需要心率明细时打开。
-  const ctx = loadDailyContext({ withHr: true });
+  // 单一口径:派生结果由 lib/daily-context.ts 统一计算,与洞察规则、日结、教练工具共用,
+  // 避免多处各自拼装导致窗口天数/合并规则漂移。hr:"full" 带上心率逐日明细(总览卡展开表用)。
+  const ctx = loadDailyContext({ hr: "full" });
   const {
     today,
     googleRows,

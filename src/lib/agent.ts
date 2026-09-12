@@ -6,7 +6,6 @@ import {
   queryTrainingHistoryDetailed,
   queryMuscleRecovery,
   queryBodyComposition,
-  queryGoogleDailyMetricsRange,
   saveTrainingPlan,
   savePlanAdvice,
   queryAdviceHistory,
@@ -15,21 +14,10 @@ import {
   getCoachNotes,
   getActiveCoachNotes,
   applyCoachNoteOps,
-  getSleepTargets,
   type CoachNoteOp,
 } from "./db";
-import {
-  computeRecoveryFeatures,
-  computeRecoveryScore,
-  localToday,
-  localDaysAgo,
-  summarizeTrainingLoad,
-  type GoogleMetricRow,
-  type TrainingLogRow,
-} from "./recovery";
-import { computeTrainingStatus, computeHrLoadStatus, hrLoadsByDateFromRows, computeSleepNeed } from "./training-status";
-import { computeReadiness } from "./readiness";
-import { mergeManualHealth, latestManualSleepQuality } from "./health-merge";
+import { localToday, localDaysAgo, summarizeTrainingLoad, type TrainingLogRow } from "./recovery";
+import { loadDailyContext } from "./daily-context";
 
 // 长期笔记注入:每次对话都带上(已过滤过期笔记),这是"根据个人情况修正"的落点。
 // 记忆的写入不在对话热路径做——对话流结束后由 consolidateCoachNotes 异步整理进库。
@@ -210,33 +198,23 @@ export const agentTools: AgentTools = {
       "查询可穿戴设备恢复信号与训练状态：今日恢复分（0-100 及红/黄/绿档位）、HRV/静息心率相对基线的偏离（z-score）、昨晚睡眠各阶段与睡眠负债与今晚睡眠需求推荐、ACWR 急慢性负荷比与训练状态分区、form 体力-疲劳、周负荷/单调性/strain、心率负荷对照（trainingStatus.hr，手环运动记录算出的并行 ACWR）、近 7 天训练负荷汇总、各肌群恢复状态、exerciseBaseline（每个动作最近一次的实际组数与最强一组，排课时动作选择与重量的锚点）、近 14 天设备指标明细、readiness（与总览页同源的今日建议合成结论）",
     inputSchema: z.object({}),
     execute: async () => {
-      // 35 天窗口：覆盖 21 天基线池 + 当天 + ACWR 慢性池；明细只回传最近 14 天控制 payload。
-      const rows = queryGoogleDailyMetricsRange(35) as GoogleMetricRow[];
-      // 与 dashboard 路由同口径：手动录入补缺 + 今日建议合成,避免卡片和教练各说各话。
-      const manual = queryHealthMetrics(30) as Record<string, unknown>[];
-      const sleepTargets = getSleepTargets();
-      const recovery = computeRecoveryFeatures(mergeManualHealth(rows, manual), { sleepTargets });
-      // 35 天训练窗口覆盖 ACWR 的 28 天慢性池；近 7 天汇总从同一份结果本地切片,
-      // 避免再发一次 N+1 查询且与 trainingStatus 的周窗口口径一致。
-      const logs = queryTrainingHistoryDetailed(35) as TrainingLogRow[];
-      const trainingStatus = computeTrainingStatus(logs);
-      // 心率负荷对照,与总览页同源,供教练交叉验证 RPE 负荷。
-      trainingStatus.hr = computeHrLoadStatus(hrLoadsByDateFromRows(rows));
-      const recoveryScore = computeRecoveryScore(recovery);
+      // 与总览页 / 洞察规则共用同一口径(见 lib/daily-context.ts),避免卡片与教练各说各话。
+      // hr:"summary" 只带心率负荷汇总——逐日明细会让 tool 返回值过大、挤占对话上下文。
+      const ctx = loadDailyContext({ hr: "summary" });
       return {
-        recovery,
-        recoveryScore,
-        readiness: computeReadiness(trainingStatus, recoveryScore, {
-          manualSleepQuality: latestManualSleepQuality(manual),
-        }),
-        trainingStatus,
-        sleepNeed: computeSleepNeed(recovery.sleep, trainingStatus.yesterdayLoad, sleepTargets),
-        training: summarizeTrainingLoad(logs.filter((l) => l.date >= localDaysAgo(6))),
+        recovery: ctx.recoveryFeatures,
+        recoveryScore: ctx.recoveryScore,
+        readiness: ctx.readiness,
+        trainingStatus: ctx.trainingStatus,
+        sleepNeed: ctx.sleepNeed,
+        // 近 7 天汇总与 trainingStatus 的周窗口同口径(都从同一份日志本地切片,不再发 N+1 查询)。
+        training: summarizeTrainingLoad(ctx.trainingLogs.filter((l) => l.date >= localDaysAgo(6))),
         muscleRecovery: queryMuscleRecovery(),
         // 动作级基线随首次查询直接带回:即使不再调 query_training_history,
         // 排课也能拿到"上次实际重量"这个渐进超负荷的基准。
-        exerciseBaseline: buildExerciseBaseline(logs),
-        recent: rows.slice(-14),
+        exerciseBaseline: buildExerciseBaseline(ctx.trainingLogs),
+        // 明细只回传最近 14 天控制 payload。
+        recent: ctx.googleRows.slice(-14),
       };
     },
   }),

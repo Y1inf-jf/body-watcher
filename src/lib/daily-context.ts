@@ -50,6 +50,8 @@ export interface DailyContext {
   readiness: Readiness;
   /** 最近一次训练日期(DESC 查询取首条),洞察的"停训空窗"规则用 */
   lastSessionDate: string | null;
+  /** 原始训练记录(DESC,新→旧)。动作基线、周负荷汇总等要明细的调用方直接复用,不必再查一次 */
+  trainingLogs: TrainingLogRow[];
 }
 
 /**
@@ -57,10 +59,15 @@ export interface DailyContext {
  *
  * - days 默认 35(28 天慢性池 + 7 天缓冲);恢复侧基线池只取最近 21 个样本,
  *   所以 30 与 35 对恢复分等价,统一到 35 不会改变分数。
- * - withHr 只在需要心率负荷明细时打开(总览卡展开表),其余场景省掉这段计算。
+ * - hr 控制心率负荷对照的粒度:"none" 不算(默认,同步落档不需要);
+ *   "summary" 只算汇总(教练工具用,带上逐日明细会让 tool payload 过大);
+ *   "full" 额外带逐日明细(总览卡展开表用)。
  */
-export function loadDailyContext(opts: { days?: number; withHr?: boolean } = {}): DailyContext {
+export function loadDailyContext(
+  opts: { days?: number; hr?: "none" | "summary" | "full" } = {}
+): DailyContext {
   const days = opts.days ?? 35;
+  const hr = opts.hr ?? "none";
   const googleRows = queryGoogleDailyMetricsRange(days) as GoogleMetricRow[];
   const healthMetrics = queryHealthMetrics(30) as Record<string, unknown>[];
 
@@ -71,11 +78,9 @@ export function loadDailyContext(opts: { days?: number; withHr?: boolean } = {})
 
   const logs = queryTrainingHistoryDetailed(days) as TrainingLogRow[];
   const trainingStatus = computeTrainingStatus(logs);
-  if (opts.withHr) {
-    trainingStatus.hr = {
-      ...computeHrLoadStatus(hrLoadsByDateFromRows(googleRows)),
-      daily: hrDailyFromRows(googleRows),
-    };
+  if (hr !== "none") {
+    trainingStatus.hr = computeHrLoadStatus(hrLoadsByDateFromRows(googleRows));
+    if (hr === "full") trainingStatus.hr.daily = hrDailyFromRows(googleRows);
   }
 
   const sleepNeed = computeSleepNeed(
@@ -98,6 +103,7 @@ export function loadDailyContext(opts: { days?: number; withHr?: boolean } = {})
     readiness,
     // queryTrainingHistoryDetailed 是 DESC:首条即最近一次训练。
     lastSessionDate: logs.length > 0 ? String(logs[0].date) : null,
+    trainingLogs: logs,
   };
 }
 
