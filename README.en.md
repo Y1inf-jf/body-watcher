@@ -119,6 +119,11 @@ Single-user tool, but it **ships with a site-wide login wall**, so it is safe to
 - **Sessions**: the `bw_session` cookie is `<expiry-timestamp>.<HMAC-SHA256 signature>` — stateless, built on
   Web Crypto only (so it behaves identically in the Edge proxy and Node routes), verified with a
   constant-time comparison. The password itself is never stored in the cookie; `.env` holds only a scrypt hash.
+- **Login throttling**: graduated backoff per client IP — 3 failures lock for 30s, 5 for 5 minutes,
+  8 for 30 minutes; a successful login resets the counter. While locked it returns 429 + `Retry-After`
+  and **skips scrypt entirely** (otherwise the limiter itself becomes a CPU amplifier). The key is the
+  `X-Real-IP` header injected by nginx: this project's `X-Forwarded-For` uses append semantics, so its
+  leftmost value is client-supplied and spoofable — keying on it would mean no throttling at all.
 - **Secrets** live only in `.env` (gitignored) — never in the database or in git. The database is a single SQLite file.
 - **Still single-user by design**: no multi-tenant isolation and no row-level permissions. That is a deliberate
   trade-off, not an oversight.
@@ -170,6 +175,8 @@ body-watcher/
 │   │   ├── readiness.ts          # recovery × load → today's train/rest verdict (pure)
 │   │   ├── daily-context.ts      # single source of truth + daily settle (dashboard/insights/coach)
 │   │   ├── insights.ts           # proactive insight rule engine
+│   │   ├── auth.ts               # session signing & verification (HMAC, Web Crypto)
+│   │   ├── login-throttle.ts     # graduated login-failure throttling (in-process)
 │   │   ├── xunji.ts              # XunJi API client & mirror
 │   │   ├── agent.ts              # agent tools & system prompts
 │   │   ├── db.ts                 # SQLite data layer

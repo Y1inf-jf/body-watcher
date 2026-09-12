@@ -118,6 +118,10 @@ npm run dev
   未登录时页面 302 跳 `/login`，API 返回 401 JSON；仅 `/login`、`/api/auth/login`、`/api/auth/logout` 放行。
 - **会话**：`bw_session` cookie = `<过期时间戳>.<HMAC-SHA256 签名>`，无状态，只用 Web Crypto 实现
   （保证 Edge 与 Node 路由行为一致），校验走固定耗时比较。口令本身不落 cookie，`.env` 里只存 scrypt 哈希。
+- **登录失败限流**：按客户端 IP 递进退避——3 次失败锁 30 秒、5 次锁 5 分钟、8 次锁 30 分钟，
+  登录成功即清零。被限流时直接返回 429 + `Retry-After`，**不再执行 scrypt**
+  （否则限流本身会变成 CPU 放大器）。限流键取 nginx 注入的 `X-Real-IP`：本项目的
+  `X-Forwarded-For` 是追加语义、最左值由客户端自带可伪造，拿它做键等于没限。
 - **密钥**只存在于 `.env`（已 gitignore），不入库、不入 git。数据库是单文件 SQLite。
 - **仍是单用户模型**：没有多租户隔离，也没有行级权限——这是刻意的取舍，不是遗漏。
 
@@ -168,6 +172,8 @@ body-watcher/
 │   │   ├── readiness.ts          # 恢复 × 负荷 → 今日练休结论（纯函数）
 │   │   ├── daily-context.ts      # 单一口径入口 + 日结（总览/洞察/教练工具共用）
 │   │   ├── insights.ts           # 主动洞察规则引擎
+│   │   ├── auth.ts               # 会话签名与校验（HMAC，Web Crypto）
+│   │   ├── login-throttle.ts     # 登录失败递进退避限流（进程内内存态）
 │   │   ├── xunji.ts              # 训记 API 客户端与镜像
 │   │   ├── agent.ts              # Agent 工具与系统提示词
 │   │   ├── db.ts                 # SQLite 数据访问层
