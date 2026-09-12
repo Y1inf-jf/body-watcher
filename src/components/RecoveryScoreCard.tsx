@@ -73,6 +73,19 @@ export default function RecoveryScoreCard({
       ? `${usedParts.join(" + ")}${droppedParts.length > 0 ? `（${droppedParts.join("/")}今日无数据，未计入）` : ""}`
       : "40% HRV + 30% 静息心率 + 30% 睡眠";
 
+  // 实际算式:把参与项的归一化权重与 z 逐项写出来,分数可直接核对,不必反推。
+  // 负 z 加括号,避免 "0.50 × -2.01" 这种连字符歧义。
+  const terms: string[] = [];
+  for (const [key] of SIGNAL_LABELS) {
+    const c = score.components[key];
+    if (c.weightUsed == null || c.z == null) continue;
+    terms.push(`${c.weightUsed.toFixed(2)} × ${c.z < 0 ? `(${c.z.toFixed(2)})` : c.z.toFixed(2)}`);
+  }
+  const compositeExpr =
+    score.score !== null && score.compositeZ != null && terms.length > 0
+      ? `${terms.join(" + ")} = ${score.compositeZ.toFixed(2)}`
+      : null;
+
   return (
     <Card glowColor={zone?.hex} className="animate-fade-up p-5">
       <CardTitle
@@ -163,6 +176,12 @@ export default function RecoveryScoreCard({
           <p className="mt-2 text-[10px] text-zinc-600">
             50 = 你的正常水平 · {formula}
           </p>
+          {compositeExpr && (
+            <div className="mt-1 space-y-0.5">
+              <p className="font-mono text-[10px] text-zinc-500">综合 z = {compositeExpr}</p>
+              <p className="font-mono text-[10px] text-zinc-600">正态映射 → {score.score} 分</p>
+            </div>
+          )}
         </div>
       </div>
     </Card>
