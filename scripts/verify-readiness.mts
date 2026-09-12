@@ -1,5 +1,5 @@
 // 恢复/合成建议的回归验证脚本(手动运行,无测试框架依赖): npx -y tsx scripts/verify-readiness.mts
-import { computeRecoveryFeatures, computeRecoveryScore } from "../src/lib/recovery";
+import { computeRecoveryFeatures, computeRecoveryScore, localDaysAgo } from "../src/lib/recovery";
 import { computeTrainingStatus, computeSleepNeed } from "../src/lib/training-status";
 import { computeReadiness } from "../src/lib/readiness";
 import { mergeManualHealth, latestManualSleepQuality } from "../src/lib/health-merge";
@@ -100,8 +100,11 @@ console.log("[手动合并]");
   check("手动行被补进且升序", merged.length === 2 && merged[0].date === "2026-09-06");
   const m7 = merged.find((r) => r.date === "2026-09-07")!;
   check("sleep_hours 换算在床分钟", m7.sleep_in_bed_minutes === 390, m7);
-  const q = latestManualSleepQuality([{ date: "2026-09-01", sleep_quality: 2 }, { date: "2026-09-07", sleep_quality: 4 }]);
+  // 相对日期:latestManualSleepQuality 按"昨天起"过滤,写死绝对日期会随时间腐化
+  // (原用例写 2026-09-01/09-07,过了 09-09 就必然失败)。
+  const q = latestManualSleepQuality([{ date: localDaysAgo(9), sleep_quality: 2 }, { date: localDaysAgo(1), sleep_quality: 4 }]);
   check("自评只取近两晚", q === 4, q);
+  check("过期自评被忽略", latestManualSleepQuality([{ date: localDaysAgo(9), sleep_quality: 2 }]) === null);
   check("设备已有值不被手动覆盖", mergeManualHealth(
     [{ date: "2026-09-07", sleep_in_bed_minutes: 500 } as GoogleMetricRow],
     [{ date: "2026-09-07", sleep_hours: 6 }]
