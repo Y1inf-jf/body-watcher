@@ -298,6 +298,7 @@ function mkStatus(acwrZone: string | null, formValue: number | null, monoWarn = 
     weekly: { load7d, monotony: 1, strain: load7d, monotonyWarning: monoWarn },
     estimatedSessions: 0,
     totalSessions: load7d > 0 ? 5 : 0,
+    allSessionsEstimated: false,
   } as unknown as ReturnType<typeof computeTrainingStatus>;
 }
 
@@ -336,6 +337,12 @@ describe("readiness 黄金用例", () => {
   test("恢复good×build 但form疲劳 → normal", () => {
     const r = computeReadiness(mkStatus("under", -15), mkScore(80));
     assert.equal(r.level, "normal", `${r.level}/${r.loadPart}`);
+  });
+
+  test("无 RPE 模式不因估算欠训练而建议冲强度", () => {
+    const status = mkStatus("under", 0);
+    status.allSessionsEstimated = true;
+    assert.equal(computeReadiness(status, mkScore(80)).level, "normal");
   });
 
   test("全坏 → rest", () => {

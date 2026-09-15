@@ -14,6 +14,7 @@ export interface DailyLoadPoint {
   rpeUsed: number | null;
   estimated: boolean; // RPE 为估计值(会话 RPE 和动作 RPE 都缺)
   sessions: number;
+  estimatedSessions: number;
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -72,7 +73,10 @@ export function buildDailyLoadSeries(
   days: number,
   today: string = localToday()
 ): DailyLoadPoint[] {
-  const byDate = new Map<string, { load: number; rpe: number | null; estimated: boolean; sessions: number }>();
+  const byDate = new Map<
+    string,
+    { load: number; rpe: number | null; estimated: boolean; sessions: number; estimatedSessions: number }
+  >();
   for (const log of logs) {
     const { load, rpe, estimated } = sessionLoadOf(log);
     if (load <= 0) continue;
@@ -80,10 +84,11 @@ export function buildDailyLoadSeries(
     if (day) {
       day.load += load;
       day.sessions += 1;
+      if (estimated) day.estimatedSessions += 1;
       day.estimated = day.estimated || estimated;
       if (rpe !== null) day.rpe = rpe;
     } else {
-      byDate.set(log.date, { load, rpe, estimated, sessions: 1 });
+      byDate.set(log.date, { load, rpe, estimated, sessions: 1, estimatedSessions: estimated ? 1 : 0 });
     }
   }
 
@@ -100,6 +105,7 @@ export function buildDailyLoadSeries(
       rpeUsed: day?.rpe ?? null,
       estimated: day?.estimated ?? false,
       sessions: day?.sessions ?? 0,
+      estimatedSessions: day?.estimatedSessions ?? 0,
     });
   }
   return series;
@@ -362,8 +368,10 @@ export interface TrainingStatus {
   acwr: AcwrResult;
   form: FormResult;
   weekly: WeeklyLoadResult;
-  estimatedSessions: number; // 用了估计 RPE 的训练日数
+  estimatedSessions: number; // 用了估计 RPE 的训练次数
   totalSessions: number;
+  // 训记未提供任何 RPE 时开启:估算值仅用于趋势,不据此建议加量。
+  allSessionsEstimated: boolean;
   hr?: HrLoadStatus; // 心率负荷对照(数据来自 Google 同步,调用方有就带上)
 }
 
@@ -374,13 +382,16 @@ export function computeTrainingStatus(
 ): TrainingStatus {
   const days = opts.days ?? 35;
   const full = buildDailyLoadSeries(logs, days, opts.today);
+  const estimatedSessions = full.reduce((acc, p) => acc + p.estimatedSessions, 0);
+  const totalSessions = full.reduce((acc, p) => acc + p.sessions, 0);
   return {
     series: full.slice(-28),
     yesterdayLoad: full.length >= 2 ? full[full.length - 2].load : 0,
     acwr: computeAcwr(full),
     form: computeForm(full),
     weekly: computeWeeklyLoad(full),
-    estimatedSessions: full.filter((p) => p.sessions > 0 && p.estimated).length,
-    totalSessions: full.reduce((acc, p) => acc + p.sessions, 0),
+    estimatedSessions,
+    totalSessions,
+    allSessionsEstimated: totalSessions > 0 && estimatedSessions === totalSessions,
   };
 }

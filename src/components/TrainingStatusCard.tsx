@@ -115,11 +115,15 @@ export default function TrainingStatusCard({ status }: { status: TrainingStatus 
             </div>
           </div>
 
-          {status.estimatedSessions > 0 && (
+          {status.allSessionsEstimated ? (
             <p className="mt-2 text-[10px] text-zone-amber/80">
-              {status.estimatedSessions}/{status.totalSessions} 次训练的负荷由估计 RPE 得出——在训记里填 RPE 可显著提升精度
+              无 RPE 模式：负荷按组数和时长估算，仅用于看趋势；估算出的“欠训练”不会触发加量建议。
             </p>
-          )}
+          ) : status.estimatedSessions > 0 ? (
+            <p className="mt-2 text-[10px] text-zone-amber/80">
+              {status.estimatedSessions}/{status.totalSessions} 次训练的负荷由组数和时长估算，趋势请结合手环心率负荷对照。
+            </p>
+          ) : null}
 
           {status.hr && <HrLoadLine hr={status.hr} />}
         </div>

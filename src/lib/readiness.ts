@@ -87,6 +87,12 @@ export function classifyLoadBand(status: TrainingStatus): LoadBandResult {
     parts.push(`单调性 ${weekly.monotony.toFixed(1)}（内容太单一）`);
     if (band === "build") band = "maintain";
   }
+  // 训记没有 RPE 时,组数和时长只能反映剂量,不能可靠判断接近力竭程度。
+  // 保留高负荷预警的保守价值,但不让估算出的"欠训练"驱动加量/冲强度。
+  if (status.allSessionsEstimated && band === "build") {
+    parts.push("负荷由组数和时长估算，不据此加量");
+    band = "maintain";
+  }
 
   const noteMap: Record<LoadBand, string> = {
     build: "相对平时偏少，有加量空间",
