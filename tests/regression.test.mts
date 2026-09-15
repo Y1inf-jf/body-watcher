@@ -245,6 +245,44 @@ describe("真实数据回放(服务器 2026-08-28..09-07)", () => {
   });
 });
 
+describe("睡眠体温偏差", () => {
+  // 基线直接用设备给的 30 天中位数(temp_baseline_c),不做二次基线;
+  // 偏差 = 夜间 − 基线,≥1°C 打旗标(压恢复分到黄档),缺失字段不出偏差。
+  test("偏差 = 夜间 − 设备基线,保留 1 位小数", () => {
+    const f = computeRecoveryFeatures([
+      { date: "2026-09-13", temp_night_c: 32.5, temp_baseline_c: 32.3 },
+      { date: "2026-09-14", temp_night_c: 33.22, temp_baseline_c: 32.33 },
+    ]);
+    assert.equal(f.temp.nightC, 33.22);
+    assert.equal(f.temp.baselineC, 32.33);
+    assert.equal(f.temp.deviationC, 0.9);
+  });
+
+  test("偏差 ≥1°C → 恢复分带皮肤温度旗标", () => {
+    const f = computeRecoveryFeatures([
+      { date: "2026-09-14", temp_night_c: 33.4, temp_baseline_c: 32.3 },
+    ]);
+    const score = computeRecoveryScore(f);
+    assert.ok(score.flags.some((s) => /皮肤温度偏高/.test(s)), JSON.stringify(score.flags));
+  });
+
+  test("偏差 <1°C → 不打旗标", () => {
+    const score = computeRecoveryScore(
+      computeRecoveryFeatures([{ date: "2026-09-14", temp_night_c: 32.8, temp_baseline_c: 32.3 }])
+    );
+    assert.ok(!score.flags.some((s) => /皮肤温度/.test(s)), JSON.stringify(score.flags));
+  });
+
+  test("夜间或基线缺失 → 偏差为 null,不误报", () => {
+    const f = computeRecoveryFeatures([
+      { date: "2026-09-13", temp_night_c: 32.5 },
+      { date: "2026-09-14" },
+    ]);
+    assert.equal(f.temp.deviationC, null);
+    assert.equal(computeRecoveryScore(f).flags.some((s) => /皮肤温度/.test(s)), false);
+  });
+});
+
 function mkStatus(acwrZone: string | null, formValue: number | null, monoWarn = false, load7d = 300) {
   return {
     series: [],

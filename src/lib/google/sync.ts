@@ -210,7 +210,7 @@ interface DailyMetricParse {
   label: string;
 }
 
-// HRV / 静息心率 / 呼吸率 / 血氧：每日一个点，按 payload 自带 date 归属。
+// HRV / 静息心率 / 呼吸率 / 血氧 / 睡眠体温：每日一个点，按 payload 自带 date 归属。
 const DAILY_PARSES: DailyMetricParse[] = [
   {
     rawKey: "daily-heart-rate-variability",
@@ -274,6 +274,25 @@ const DAILY_PARSES: DailyMetricParse[] = [
           "average",
           "value",
         ]),
+      };
+    },
+  },
+  {
+    // Fitbit 手环的“体温”即睡眠皮肤温度:夜间均值 + 设备侧 30 天基线中位数 + 30 天波动。
+    // 2026-09-15 实测 payload 字段名(nightlyTemperatureCelsius 等),结构见 docs/google-health-spike.md。
+    rawKey: "daily-sleep-temperature-derivations",
+    label: "睡眠体温",
+    dateKey: (h) =>
+      civilDateStr(
+        (h.dailySleepTemperatureDerivations as Record<string, unknown> | undefined)?.date as never
+      ),
+    fields: (h) => {
+      const v = h.dailySleepTemperatureDerivations as Record<string, unknown> | undefined;
+      const round2 = (x: number | null): number | null => (x === null ? null : Math.round(x * 100) / 100);
+      return {
+        temp_night_c: round2(num(v?.nightlyTemperatureCelsius)),
+        temp_baseline_c: round2(num(v?.baselineTemperatureCelsius)),
+        temp_stddev_30d_c: round2(num(v?.relativeNightlyStddev30dCelsius)),
       };
     },
   },

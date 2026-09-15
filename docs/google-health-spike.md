@@ -50,6 +50,11 @@
 - **已验证的数据类型**:steps / heart-rate / exercise / sleep / weight /
   daily-heart-rate-variability / daily-oxygen-saturation / daily-respiratory-rate
   (全部 HTTP 200;数据结构见下例)
+- **睡眠体温(2026-09-15 补验)**:`daily-sleep-temperature-derivations` 有真实数据,
+  即 Fitbit App 里的"体温"。payload:`dailySleepTemperatureDerivations.{date,
+  nightlyTemperatureCelsius, baselineTemperatureCelsius, relativeNightlyStddev30dCelsius}`,
+  夜间均值为皮肤温度绝对值(≈32°C),基线是设备侧 30 天中位数,偏差(夜间−基线)才是恢复信号。
+  `core-body-temperature` 返回 0 点(核心体温手环不产生),暂不接入。
 - **数据样例**(weight,含时区、来源,JSON 干净):
 
 ```json

@@ -193,6 +193,9 @@ function createTables(db: Database.Database) {
       resting_hr INTEGER,
       respiratory_rate REAL,
       spo2_avg REAL,
+      temp_night_c REAL,
+      temp_baseline_c REAL,
+      temp_stddev_30d_c REAL,
       steps INTEGER,
       weight_kg REAL,
       exercise_count INTEGER,
@@ -277,6 +280,13 @@ function migrate(db: Database.Database) {
       "exercise_zone_peak_s INTEGER",
       "exercise_calories INTEGER",
     ]) {
+      db.exec(`ALTER TABLE google_daily_metrics ADD COLUMN ${col}`);
+    }
+  }
+  // 睡眠皮肤温度(数据类型 daily-sleep-temperature-derivations,Fitbit 手环“体温”的来源):
+  // 夜间均值 / 设备侧 30 天基线中位数 / 30 天波动,偏差(夜间−基线)在 recovery 层现算。
+  if (!gdmCols.find((c) => c.name === "temp_night_c")) {
+    for (const col of ["temp_night_c REAL", "temp_baseline_c REAL", "temp_stddev_30d_c REAL"]) {
       db.exec(`ALTER TABLE google_daily_metrics ADD COLUMN ${col}`);
     }
   }
@@ -1418,6 +1428,9 @@ export interface GoogleDailyMetricsInput {
   resting_hr?: number | null;
   respiratory_rate?: number | null;
   spo2_avg?: number | null;
+  temp_night_c?: number | null;
+  temp_baseline_c?: number | null;
+  temp_stddev_30d_c?: number | null;
   steps?: number | null;
   weight_kg?: number | null;
   exercise_count?: number | null;
@@ -1449,6 +1462,9 @@ export function upsertGoogleDailyMetrics(data: GoogleDailyMetricsInput) {
     resting_hr: null,
     respiratory_rate: null,
     spo2_avg: null,
+    temp_night_c: null,
+    temp_baseline_c: null,
+    temp_stddev_30d_c: null,
     steps: null,
     weight_kg: null,
     exercise_count: null,
@@ -1466,13 +1482,15 @@ export function upsertGoogleDailyMetrics(data: GoogleDailyMetricsInput) {
     INSERT INTO google_daily_metrics (
       date, sleep_in_bed_minutes, sleep_deep_minutes, sleep_rem_minutes, sleep_light_minutes, sleep_awake_minutes,
       sleep_bedtime, sleep_wakeup, hrv_avg_ms, hrv_rmssd_deep_ms, hrv_nonrem_hr, hrv_entropy,
-      resting_hr, respiratory_rate, spo2_avg, steps, weight_kg, exercise_count, exercise_minutes,
+      resting_hr, respiratory_rate, spo2_avg, temp_night_c, temp_baseline_c, temp_stddev_30d_c,
+      steps, weight_kg, exercise_count, exercise_minutes,
       exercise_avg_hr, exercise_zone_light_s, exercise_zone_moderate_s, exercise_zone_vigorous_s, exercise_zone_peak_s,
       exercise_calories, synced_at
     ) VALUES (
       @date, @sleep_in_bed_minutes, @sleep_deep_minutes, @sleep_rem_minutes, @sleep_light_minutes, @sleep_awake_minutes,
       @sleep_bedtime, @sleep_wakeup, @hrv_avg_ms, @hrv_rmssd_deep_ms, @hrv_nonrem_hr, @hrv_entropy,
-      @resting_hr, @respiratory_rate, @spo2_avg, @steps, @weight_kg, @exercise_count, @exercise_minutes,
+      @resting_hr, @respiratory_rate, @spo2_avg, @temp_night_c, @temp_baseline_c, @temp_stddev_30d_c,
+      @steps, @weight_kg, @exercise_count, @exercise_minutes,
       @exercise_avg_hr, @exercise_zone_light_s, @exercise_zone_moderate_s, @exercise_zone_vigorous_s, @exercise_zone_peak_s,
       @exercise_calories, @synced_at
     )
@@ -1491,6 +1509,9 @@ export function upsertGoogleDailyMetrics(data: GoogleDailyMetricsInput) {
       resting_hr = COALESCE(excluded.resting_hr, google_daily_metrics.resting_hr),
       respiratory_rate = COALESCE(excluded.respiratory_rate, google_daily_metrics.respiratory_rate),
       spo2_avg = COALESCE(excluded.spo2_avg, google_daily_metrics.spo2_avg),
+      temp_night_c = COALESCE(excluded.temp_night_c, google_daily_metrics.temp_night_c),
+      temp_baseline_c = COALESCE(excluded.temp_baseline_c, google_daily_metrics.temp_baseline_c),
+      temp_stddev_30d_c = COALESCE(excluded.temp_stddev_30d_c, google_daily_metrics.temp_stddev_30d_c),
       steps = COALESCE(excluded.steps, google_daily_metrics.steps),
       weight_kg = COALESCE(excluded.weight_kg, google_daily_metrics.weight_kg),
       exercise_count = COALESCE(excluded.exercise_count, google_daily_metrics.exercise_count),

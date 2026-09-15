@@ -20,6 +20,10 @@ interface MetricsRow {
   hrv_avg_ms?: number | null;
   hrv_rmssd_deep_ms?: number | null;
   resting_hr?: number | null;
+  respiratory_rate?: number | null;
+  spo2_avg?: number | null;
+  temp_night_c?: number | null;
+  temp_baseline_c?: number | null;
   steps?: number | null;
   weight_kg?: number | null;
   exercise_minutes?: number | null;
@@ -43,6 +47,7 @@ const TYPE_LABELS: Record<string, string> = {
   "daily-resting-heart-rate": "静息心率",
   "daily-respiratory-rate": "呼吸率",
   "daily-oxygen-saturation": "血氧",
+  "daily-sleep-temperature-derivations": "睡眠体温",
 };
 
 function fmtTime(iso?: string | null): string {
@@ -332,6 +337,9 @@ export default function GoogleSyncPage() {
                 <th className="py-1.5 pr-3">HRV均值</th>
                 <th className="py-1.5 pr-3">深睡RMSSD</th>
                 <th className="py-1.5 pr-3">静息心率</th>
+                <th className="py-1.5 pr-3">呼吸率</th>
+                <th className="py-1.5 pr-3">血氧%</th>
+                <th className="py-1.5 pr-3">体温°C(Δ基线)</th>
                 <th className="py-1.5 pr-3">步数</th>
                 <th className="py-1.5 pr-3">体重kg</th>
                 <th className="py-1.5">运动min</th>
@@ -348,6 +356,17 @@ export default function GoogleSyncPage() {
                   <td className="py-1.5 pr-3">{m.hrv_avg_ms ?? "—"}</td>
                   <td className="py-1.5 pr-3">{m.hrv_rmssd_deep_ms ?? "—"}</td>
                   <td className="py-1.5 pr-3">{m.resting_hr ?? "—"}</td>
+                  <td className="py-1.5 pr-3">{m.respiratory_rate ?? "—"}</td>
+                  <td className="py-1.5 pr-3">{m.spo2_avg ?? "—"}</td>
+                  <td className="py-1.5 pr-3">
+                    {m.temp_night_c != null
+                      ? `${m.temp_night_c.toFixed(1)}${
+                          m.temp_baseline_c != null
+                            ? ` (${m.temp_night_c - m.temp_baseline_c >= 0 ? "+" : ""}${(m.temp_night_c - m.temp_baseline_c).toFixed(1)})`
+                            : ""
+                        }`
+                      : "—"}
+                  </td>
                   <td className="py-1.5 pr-3">{m.steps ?? "—"}</td>
                   <td className="py-1.5 pr-3">{m.weight_kg ?? "—"}</td>
                   <td className="py-1.5">{m.exercise_minutes ?? "—"}</td>

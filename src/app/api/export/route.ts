@@ -32,7 +32,7 @@ export async function GET() {
 
   lines.push("");
   lines.push("=== 健康数据(Google 同步)===");
-  lines.push("date,hrv_avg_ms,hrv_rmssd_deep_ms,hrv_nonrem_hr,hrv_entropy,resting_hr,respiratory_rate,spo2_avg,weight_kg,steps,exercise_count,exercise_minutes,sleep_in_bed_minutes,sleep_deep_minutes,sleep_rem_minutes,sleep_light_minutes,sleep_awake_minutes,sleep_bedtime,sleep_wakeup");
+  lines.push("date,hrv_avg_ms,hrv_rmssd_deep_ms,hrv_nonrem_hr,hrv_entropy,resting_hr,respiratory_rate,spo2_avg,temp_night_c,temp_baseline_c,temp_stddev_30d_c,weight_kg,steps,exercise_count,exercise_minutes,sleep_in_bed_minutes,sleep_deep_minutes,sleep_rem_minutes,sleep_light_minutes,sleep_awake_minutes,sleep_bedtime,sleep_wakeup");
   for (const h of health) {
     lines.push(
       [
@@ -44,6 +44,9 @@ export async function GET() {
         h.resting_hr,
         h.respiratory_rate,
         h.spo2_avg,
+        h.temp_night_c,
+        h.temp_baseline_c,
+        h.temp_stddev_30d_c,
         h.weight_kg,
         h.steps,
         h.exercise_count,

@@ -14,6 +14,9 @@ export interface GoogleMetricRow {
   resting_hr?: number | null;
   respiratory_rate?: number | null;
   spo2_avg?: number | null;
+  temp_night_c?: number | null;
+  temp_baseline_c?: number | null;
+  temp_stddev_30d_c?: number | null;
   steps?: number | null;
   [key: string]: unknown;
 }
@@ -79,6 +82,13 @@ export interface RecoveryFeatures {
   restingHr: BaselineFeature & { deviationBpm: number | null };
   respiratoryRate: BaselineFeature;
   spo2Avg: number | null;
+  // 睡眠皮肤温度:基线直接用设备给的 30 天中位数,不做二次基线;偏差 = 夜间 − 基线。
+  temp: {
+    nightC: number | null;
+    baselineC: number | null;
+    deviationC: number | null;
+    stddev30dC: number | null;
+  };
   sleep: SleepSummary;
   targets: SleepTargets; // 回显用户目标,供 UI/LLM 说明口径
   steps7dTotal: number | null;
@@ -214,6 +224,18 @@ export function computeRecoveryFeatures(
   );
   const spo2Avg = today?.spo2_avg != null ? Number(today.spo2_avg) : null;
 
+  const tempNight = today?.temp_night_c != null ? Number(today.temp_night_c) : null;
+  const tempBaseline = today?.temp_baseline_c != null ? Number(today.temp_baseline_c) : null;
+  const temp = {
+    nightC: tempNight,
+    baselineC: tempBaseline,
+    deviationC:
+      tempNight !== null && tempBaseline !== null
+        ? Math.round((tempNight - tempBaseline) * 10) / 10
+        : null,
+    stddev30dC: today?.temp_stddev_30d_c != null ? Number(today.temp_stddev_30d_c) : null,
+  };
+
   const inBedOf = (r: GoogleMetricRow): number | null =>
     r.sleep_in_bed_minutes == null ? null : Number(r.sleep_in_bed_minutes);
   // 实际睡眠按"在床 − 夜间清醒"计:躺 8 小时醒 1.5 小时不该算睡满 8 小时。
@@ -300,6 +322,7 @@ export function computeRecoveryFeatures(
     restingHr,
     respiratoryRate,
     spo2Avg,
+    temp,
     sleep,
     targets,
     steps7dTotal: rowsAsc.length ? steps7dTotal : null,
@@ -371,6 +394,11 @@ export function computeRecoveryScore(f: RecoveryFeatures): RecoveryScore {
   }
   if (f.respiratoryRate.ready && f.respiratoryRate.zScore != null && f.respiratoryRate.zScore > 1) {
     flags.push(`呼吸率高于基线（+${f.respiratoryRate.zScore}σ）`);
+  }
+  // 皮肤温度比个人基线高 ≥1°C 是身体在对抗什么的信号(与 Fitbit/Whoop 的口径一致),
+  // 只打旗标压档(封顶黄色),不直接进恢复分公式——样本还少,权重给不出来。
+  if (f.temp.deviationC != null && f.temp.deviationC >= 1) {
+    flags.push(`皮肤温度偏高（+${f.temp.deviationC}°C）`);
   }
 
   // 静息心率取负：越高恢复越差。
