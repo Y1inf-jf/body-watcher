@@ -31,9 +31,13 @@
 
 - 9/16–9/18 恢复分仍为红(<34)。
 - 9/20 之后今日建议为"正常练"(不再"主动降档")。
-- 9/21 起训练卡显示"回归期",不出现"欠训练"或"加量"字样。
-- 9/19 打球计入负荷;9/21、9/23 训练时长采用手环 WORKOUT 时长(32、52 分钟)。
+- 9/19 打球按折半心率负荷(约 84 AU)计入,当日 ACWR 约 1.34(偏高——带病打球,提醒合理)。
+- 9/21、9/23 训练时长采用手环 WORKOUT 时长(32、52 分钟);这两天训练卡显示"回归期 · 第 1 周",今日建议仍为"正常练"并附"本周回归额度已用完"提示。
+- 9/24 近 7 天负荷(约 182)≥ 病前周均(约 148)→ 退出回归期,ACWR 约 1.17 落在最优区间。
+- 全程不出现"欠训练"或"有加量空间"字样。
 - `npm run check` 全绿;服务器上线后线上页面核对一次。
+
+> 备注:回放显示原先的"欠训练"主要由训记时长偏短造成——仅做时长修正,9/24 ACWR 就从 0.49 回到 1.15。
 
 ## 第 1 部分:手环运动会话接入
 
@@ -65,14 +69,16 @@
 
 1. 排除 `WORKOUT`、`WALKING`、`BIKING`。
 2. 其余会话按开始时间排序,前一段结束到后一段开始间隔 ≤10 分钟的合并为一组。
-3. 组内 `moderate + vigorous + peak` ≥ 30 分钟 → 计为一次额外训练,负荷 = `hrLoadAu(组内四区秒数)`。
-4. 返回 `{ date, minutes, types[], load }[]`。
+3. 组内 `moderate + vigorous + peak` ≥ 30 分钟 → 计为一次额外训练,负荷 = `hrLoadAu(组内四区秒数) × 0.5`。
+   折半系数 `EXTRA_HR_LOAD_FACTOR = 0.5`:心率四区负荷对有氧/球类约为 sRPE/6 口径的 2 倍
+   (9/19 心率负荷 167 AU,按 RPE7×80 分钟/6 ≈ 93 AU),折半后与力量训练同量纲(用户 2026-09-24 选定)。
+4. 返回 `ExtraActivity[]`,即 `{ date, minutes, load, label }[]`(label 取组内最长会话类型的中文名,如"球类")。
 
 对照现有数据:仅 9/19(CARDIO 07:24 + SPORT 07:44,中高强度 69 分钟)入选;9/5 RUNNING(14 分钟)、9/13 CARDIO(中强度 19 分钟)不入选,与用户描述一致。
 
 ### 接入训练状态
 
-`computeTrainingStatus(logs, opts)` 新增 `opts.extraLoads?: { date: string; load: number; label: string }[]`,在 `buildDailyLoadSeries` 中按日累加(计入 `sessions`,不计入 `estimatedSessions`)。`TrainingStatus` 新增:
+`computeTrainingStatus(logs, opts)` 新增 `opts.extraActivities?: ExtraActivity[]`,在 `buildDailyLoadSeries` 中按日累加(计入 `sessions`,不计入 `estimatedSessions`;`allSessionsEstimated` 只看训记训练)。`TrainingStatus` 新增:
 
 - `durationCorrected: number` —— 时长被手环修正的训练次数
 - `extraActivities: { date, minutes, load, label }[]` —— 窗口内计入的额外活动
@@ -96,7 +102,7 @@
 
 ### 主要拖累项
 
-`RecoveryScore` 新增 `drag: { key: "hrv" | "restingHr" | "sleep"; text: string } | null`:取 `z × weightUsed` 最负且 z ≤ −0.5 的一项,生成如"静息心率比基线高 3 bpm""HRV 低于基线 12%""睡眠比近 7 晚少 40 分钟"。无满足项为 null。`RecoveryScoreCard` 在分数下方展示该行。
+`RecoveryScore` 新增 `drag: { key: "hrv" | "restingHr" | "sleep"; text: string } | null`:取 `z × weightUsed` 最负且 z ≤ −0.5 的一项,生成如"静息心率比基线高 3 bpm""HRV 低于基线 12%""睡眠比参照线少 40 分钟"。无满足项为 null。`RecoveryScoreCard` 在分数下方展示该行。
 
 ### 今日建议门槛(`readiness.ts` `bandFromScore`)
 
@@ -120,16 +126,19 @@
 - `temp_night_c − temp_baseline_c ≥ 1.0`
 - `respiratory_rate ≥ 前 30 天中位数 + 1.0`(前序样本 ≥5 天才判)
 
-### 回归期判定 `computeLoadContext(series, googleRowsAsc, recovery, today)`
+### 回归期判定 `computeLoadContext(series, googleRowsAsc, today)`
 
-**进入**(窗口:今天往前 14 天),满足任一:
+**进入**,满足任一:
 
-- **停训**:存在连续 ≥7 天日负荷为 0 的区间,且该区间之前 28 天内有训练负荷。
-- **生病**:信号日 ≥2 天。
+- **停训**:近 28 天内结束(或仍在持续)的、连续 ≥7 天日负荷为 0 的区间,且该区间之前 28 天内有训练负荷。
+  (28 天窗口保证空窗结束后 21 天的回归期都能被识别。)
+- **生病**:近 14 天内信号日 ≥2 天。
 
-**恢复日** `resumeDate`:停训触发时为空窗后的第一个训练日;生病触发时为最后一个信号日之后的第一个训练日。尚未恢复训练时仍处回归期,周序号为 0("尚未恢复训练")。
+两者同时满足时 `reason = "illness"`。
 
-**基准周负荷** `baseWeekly`:停训区间(或首个信号日)之前 28 天总负荷 ÷ 4。为 0 时不给上限,只提示"回归期"。
+**恢复日** `resumeDate`:max(空窗最后一天, 最后一个信号日)之后的第一个训练日。尚未恢复训练时仍处回归期,周序号为 0("尚未恢复训练"),上限按第 1 周给出。
+
+**基准周负荷** `baseWeekly`:中断起点之前 28 天总负荷 ÷ 4。中断起点 = 空窗首日(有空窗时),否则为窗口内首个信号日。为 0 时不给上限,只提示"回归期"。
 
 **回归周与上限**:`week = floor((today − resumeDate) / 7) + 1`;本回归周已练 = `resumeDate + 7(week−1)` 至今的负荷和;上限系数:第 1 周 0.6、第 2 周 0.8、第 3 周 1.0。
 
@@ -153,7 +162,8 @@ type LoadContext =
 
 `classifyLoadBand(status, loadContext, recoveryBand)`:
 
-- 回归期:新 `LoadBand = "ramp"`;若 `remaining ≤ 0` 则按 `hold` 处理(本周额度用完)。
+- 回归期:新 `LoadBand = "ramp"`。`remaining ≤ 0`(本周额度用完)**只追加提示、不降档**(用户 2026-09-24 选定):
+  说明文案追加"本周回归额度已用完,今天维持量,别再加"。
 - 非回归期且 ACWR `under`:仅 `recoveryBand === "good"` 时为 `build`("有加量空间");`ok` 为 `maintain`,文案"负荷偏少,按计划练";`low`/`bad` 为 `maintain`,文案"低负荷合理,先恢复"。
 - 其余逻辑(form 疲劳、单调性、无 RPE 不加量)不变。
 
@@ -161,7 +171,7 @@ type LoadContext =
 
 | recovery | headline | detail 要点 |
 |---|---|---|
-| good | 正常练 | 回归期第 N 周,本周还剩 X AU,不冲极限 |
+| good | 正常练 | 回归期第 N 周,按上限循序加量,不冲极限 |
 | ok | 正常练 | 同上 |
 | low | 主动降档 | 回归期叠加恢复偏低,轻量为主 |
 | bad | 今天休息 | 回归期恢复差,先休息观察 |
@@ -185,9 +195,9 @@ type LoadContext =
 - `drag` 选择最拖累项及文案。
 - `bandFromScore` 新门槛(33→bad、34 无旗标→ok、50 有旗标→low、67→good)。
 - `correctDurations`:单条取较大值;多条不改。
-- `extraActivities`:9/19 夹具入选、9/13 与 9/5 夹具不入选、WALKING/BIKING 排除、相邻合并。
+- `extraActivities`:9/19 夹具入选且负荷为心率负荷的一半、9/13 与 9/5 夹具不入选、WALKING/BIKING 排除、相邻合并。
 - `illnessSignalDays` 与 `computeLoadContext`:停训触发、生病触发(单日不触发)、周序号与上限、两种退出条件。
-- readiness:回归期不出 `go_hard`;`under` + 恢复一般不出"加量"。
+- readiness:回归期不出 `go_hard`;回归期额度用完 + 恢复正常 → 仍为 `normal` 且说明含"额度已用完";`under` + 恢复一般不出"加量"。
 
 ### 回放脚本
 
@@ -203,6 +213,7 @@ type LoadContext =
 
 ## 风险
 
-- **心率负荷与 sRPE 量纲不完全等价**:球类的 TRIMP 通常高于同时长的 sRPE 估算,可能让打球日负荷偏高。只影响趋势,先接受,文档注明。
+- **心率负荷与 sRPE 量纲不完全等价**:0.5 折算系数来自单场比对,不同运动差异较大;只影响趋势,文档注明,后续可按实际数据再校准。
+- **手环数据从 9/4 才开始**:病前 4 周的基准周负荷不含历史打球,若平时常打球,基准会偏低、回归期退出偏早(由 ACWR 偏高分区兜底)。
 - **30 天基线在前期样本 <30 时即全部历史**:与现状一致,由离散下限兜底。
 - **历史快照不重算**:`recovery_snapshots` 旧记录保留旧算法数值,月报会在切换日出现口径跳变;文档注明切换日期。
