@@ -23,6 +23,8 @@ import {
   throttleRemainingMs,
 } from "../src/lib/login-throttle";
 import type { GoogleMetricRow, TrainingLogRow } from "../src/lib/recovery";
+import { parseExerciseSession, sessionsFromRawPayloads, type ExerciseSession } from "../src/lib/google/exercise-metrics";
+import { correctDurations, extraActivities } from "../src/lib/session-merge";
 
 function sleepRow(
   date: string,
@@ -586,5 +588,120 @@ describe("主要拖累项与新门槛", () => {
 
   test("恢复分 45 无旗标 × 负荷最优 → 正常练(不再降档)", () => {
     assert.equal(computeReadiness(mkStatus("optimal", 0), mkScore(45)).level, "normal");
+  });
+});
+
+// 真实 payload 形状(2026-09-23 Fitbit Air 健力会话,用户 ID 已脱敏)
+const workoutPayload = () => ({
+  name: "users/me/dataTypes/exercise/dataPoints/1",
+  dataSource: { recordingMethod: "ACTIVELY_MEASURED", device: { formFactor: "FITNESS_BAND" }, platform: "FITBIT" },
+  exercise: {
+    interval: { startTime: "2026-09-23T04:18:04Z", startUtcOffset: "28800s", endTime: "2026-09-23T05:10:24Z", endUtcOffset: "28800s" },
+    exerciseType: "WORKOUT",
+    metricsSummary: {
+      caloriesKcal: 272, averageHeartRateBeatsPerMinute: "124",
+      heartRateZoneDurations: { lightTime: "1320s", moderateTime: "1800s", vigorousTime: "0s", peakTime: "0s" },
+    },
+    activeDuration: "3136.124s",
+  },
+});
+
+function mkSession(p: Partial<ExerciseSession> & Pick<ExerciseSession, "date" | "startTime" | "endTime" | "exerciseType">): ExerciseSession {
+  return {
+    id: `${p.date}-${p.startTime}`, recordingMethod: "PASSIVELY_MEASURED", activeMinutes: 0,
+    zoneLightS: 0, zoneModerateS: 0, zoneVigorousS: 0, zonePeakS: 0, avgHr: null, ...p,
+  };
+}
+
+// 9/19 打球:07:24 有氧 20 分钟接 07:44 球类 61 分钟;骑车去球场 06:51–07:18
+const ballDay = (): ExerciseSession[] => [
+  mkSession({ date: "2026-09-19", exerciseType: "BIKING", startTime: "2026-09-19T06:51:00Z", endTime: "2026-09-19T07:18:00Z", activeMinutes: 26.6 }),
+  mkSession({ date: "2026-09-19", exerciseType: "CARDIO_WORKOUT", startTime: "2026-09-19T07:24:00Z", endTime: "2026-09-19T07:44:10Z", activeMinutes: 20.2, zoneModerateS: 360, zoneVigorousS: 840 }),
+  mkSession({ date: "2026-09-19", exerciseType: "SPORT", startTime: "2026-09-19T07:44:30Z", endTime: "2026-09-19T08:45:10Z", activeMinutes: 60.6, zoneModerateS: 2040, zoneVigorousS: 900 }),
+];
+
+describe("手环运动会话", () => {
+  test("解析手动开启的 WORKOUT", () => {
+    const s = parseExerciseSession(workoutPayload());
+    assert.ok(s);
+    assert.equal(s.date, "2026-09-23");
+    assert.equal(s.exerciseType, "WORKOUT");
+    assert.equal(s.recordingMethod, "ACTIVELY_MEASURED");
+    assert.equal(s.activeMinutes, 52.3);
+    assert.equal(s.zoneModerateS, 1800);
+    assert.equal(s.avgHr, 124);
+  });
+
+  test("被动识别会话缺 metricsSummary → 四区记 0、心率 null,不抛错", () => {
+    const p = workoutPayload() as Record<string, unknown>;
+    const ex = { ...(p.exercise as Record<string, unknown>), exerciseType: "WALKING" } as Record<string, unknown>;
+    delete ex.metricsSummary;
+    const s = parseExerciseSession({ ...p, dataSource: { recordingMethod: "PASSIVELY_MEASURED" }, exercise: ex });
+    assert.ok(s);
+    assert.equal(s.zoneModerateS, 0);
+    assert.equal(s.avgHr, null);
+  });
+
+  test("原始快照含损坏 JSON → 跳过该行,其余照常", () => {
+    const sessions = sessionsFromRawPayloads(["{not json", JSON.stringify([workoutPayload()])]);
+    assert.equal(sessions.length, 1);
+  });
+
+  test("时长修正:单条训练取手环 WORKOUT 时长", () => {
+    const logs: TrainingLogRow[] = [{ date: "2026-09-23", duration: 12 }];
+    const sessions = [mkSession({ date: "2026-09-23", exerciseType: "WORKOUT", recordingMethod: "ACTIVELY_MEASURED", startTime: "2026-09-23T04:18:04Z", endTime: "2026-09-23T05:10:24Z", activeMinutes: 52.3 })];
+    const [out] = correctDurations(logs, sessions);
+    assert.equal(out.duration, 52);
+    assert.equal(out.durationSource, "wearable");
+  });
+
+  test("时长修正:训记更长时保留训记", () => {
+    const logs: TrainingLogRow[] = [{ date: "2026-09-09", duration: 46 }];
+    const sessions = [mkSession({ date: "2026-09-09", exerciseType: "WORKOUT", recordingMethod: "ACTIVELY_MEASURED", startTime: "2026-09-09T10:31:00Z", endTime: "2026-09-09T11:17:00Z", activeMinutes: 45.6 })];
+    assert.equal(correctDurations(logs, sessions)[0].duration, 46);
+  });
+
+  test("时长修正:同日多条训练不改", () => {
+    const logs: TrainingLogRow[] = [{ date: "2026-09-23", duration: 12 }, { date: "2026-09-23", duration: 10 }];
+    const sessions = [mkSession({ date: "2026-09-23", exerciseType: "WORKOUT", recordingMethod: "ACTIVELY_MEASURED", startTime: "2026-09-23T04:18:04Z", endTime: "2026-09-23T05:10:24Z", activeMinutes: 52.3 })];
+    assert.deepEqual(correctDurations(logs, sessions).map((l) => l.duration), [12, 10]);
+  });
+
+  test("时长修正:被动识别的 WORKOUT 不算", () => {
+    const logs: TrainingLogRow[] = [{ date: "2026-09-23", duration: 12 }];
+    const sessions = [mkSession({ date: "2026-09-23", exerciseType: "WORKOUT", startTime: "2026-09-23T04:18:04Z", endTime: "2026-09-23T05:10:24Z", activeMinutes: 52.3 })];
+    assert.equal(correctDurations(logs, sessions)[0].duration, 12);
+  });
+
+  test("额外活动:9/19 打球合并计入,负荷为心率负荷的一半,骑车排除", () => {
+    const acts = extraActivities(ballDay());
+    assert.equal(acts.length, 1);
+    assert.equal(acts[0].date, "2026-09-19");
+    assert.equal(acts[0].minutes, 81);
+    assert.equal(acts[0].label, "球类");
+    // hrLoadAu(0, 2400, 1740, 0) = (2400×2 + 1740×3)/60 = 167 → ×0.5
+    assert.equal(acts[0].load, 83.5);
+  });
+
+  test("额外活动:9/13 有氧中强度 19 分钟不计入", () => {
+    const acts = extraActivities([
+      mkSession({ date: "2026-09-13", exerciseType: "CARDIO_WORKOUT", startTime: "2026-09-13T07:08:00Z", endTime: "2026-09-13T07:30:00Z", activeMinutes: 22.1, zoneModerateS: 1140 }),
+    ]);
+    assert.equal(acts.length, 0);
+  });
+
+  test("额外活动:9/5 跑步 14 分钟不计入", () => {
+    const acts = extraActivities([
+      mkSession({ date: "2026-09-05", exerciseType: "RUNNING", recordingMethod: "ACTIVELY_MEASURED", startTime: "2026-09-05T11:00:00Z", endTime: "2026-09-05T11:14:12Z", activeMinutes: 14.2, zoneModerateS: 180, zoneVigorousS: 660 }),
+    ]);
+    assert.equal(acts.length, 0);
+  });
+
+  test("额外活动:间隔超过 10 分钟的两段不合并", () => {
+    const acts = extraActivities([
+      mkSession({ date: "2026-09-19", exerciseType: "SPORT", startTime: "2026-09-19T07:00:00Z", endTime: "2026-09-19T07:25:00Z", activeMinutes: 25, zoneModerateS: 1200 }),
+      mkSession({ date: "2026-09-19", exerciseType: "SPORT", startTime: "2026-09-19T07:40:00Z", endTime: "2026-09-19T08:05:00Z", activeMinutes: 25, zoneModerateS: 1200 }),
+    ]);
+    assert.equal(acts.length, 0); // 各 20 分钟中强度,单独都不足 30 分钟
   });
 });

@@ -106,6 +106,66 @@ export function exercisePointDate(p: unknown): string | null {
   return null;
 }
 
+// 单段运动会话(google_exercise_sessions 表的一行)。
+// recordingMethod:ACTIVELY_MEASURED = 用户手动开了运动模式;PASSIVELY_MEASURED = 手环自动识别。
+export interface ExerciseSession {
+  id: string; // Google dataPoint name,幂等键
+  date: string; // 本地日期
+  startTime: string; // ISO UTC
+  endTime: string;
+  exerciseType: string; // WORKOUT / SPORT / WALKING / BIKING / ...
+  recordingMethod: string;
+  activeMinutes: number;
+  zoneLightS: number;
+  zoneModerateS: number;
+  zoneVigorousS: number;
+  zonePeakS: number;
+  avgHr: number | null;
+}
+
+export function parseExerciseSession(p: unknown): ExerciseSession | null {
+  const point = p as { name?: unknown; dataSource?: Record<string, unknown>; exercise?: Record<string, unknown> } | null;
+  const ex = point?.exercise;
+  const metrics = parseExercisePoint(p);
+  const date = exercisePointDate(p);
+  if (!ex || !metrics || !date || typeof point?.name !== "string") return null;
+  const interval = (ex.interval ?? {}) as Record<string, unknown>;
+  return {
+    id: point.name,
+    date,
+    startTime: String(interval.startTime ?? ""),
+    endTime: String(interval.endTime ?? ""),
+    exerciseType: String(ex.exerciseType ?? "UNKNOWN"),
+    recordingMethod: String(point.dataSource?.recordingMethod ?? "UNKNOWN"),
+    activeMinutes: metrics.minutes,
+    zoneLightS: metrics.zoneSeconds.light,
+    zoneModerateS: metrics.zoneSeconds.moderate,
+    zoneVigorousS: metrics.zoneSeconds.vigorous,
+    zonePeakS: metrics.zoneSeconds.peak,
+    avgHr: metrics.avgHr,
+  };
+}
+
+// google_raw_data 里 exercise 快照(每行一个 JSON 数组)→ 会话列表。迁移回填与回放脚本共用;
+// 单行损坏只跳过该行,不能让应用启动失败。
+export function sessionsFromRawPayloads(payloads: string[]): ExerciseSession[] {
+  const out: ExerciseSession[] = [];
+  for (const raw of payloads) {
+    let points: unknown;
+    try {
+      points = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(points)) continue;
+    for (const p of points) {
+      const s = parseExerciseSession(p);
+      if (s) out.push(s);
+    }
+  }
+  return out;
+}
+
 function num(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   const n = Number(v);
