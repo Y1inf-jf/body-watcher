@@ -39,8 +39,8 @@ export interface TrainingLogRow {
 
 export interface BaselineFeature {
   value: number | null;
-  baselineMean: number | null;
-  baselineSd: number | null;
+  baselineMean: number | null; // 基线中心值(中位数;HRV 为 exp(ln 中位数),单位 ms)
+  baselineSd: number | null; // 离散度(MAD×1.4826 与下限取大;HRV 为 ln 单位,无量纲)
   zScore: number | null;
   deviationPct: number | null;
   baselineDays: number;

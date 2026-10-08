@@ -104,8 +104,17 @@ export function computeLoadContext(
   const resumeDate = series.find((p) => p.date > breakEnd && p.load > 0)?.date ?? null;
 
   if (resumeDate !== null) {
-    const load7d = sumLoad(series.slice(-7));
-    if (daysBetween(resumeDate, today) >= RETURN_MAX_DAYS || (baseWeekly > 0 && load7d >= baseWeekly)) {
+    // 粘性退出:一旦某天的近 7 天负荷曾经达到基准周负荷,回归期就此结束,不会因为后面几天没练
+    // 又因为那次达标的负荷滚出窗口而"退回"回归期(真实场景:9/19 打球后 9/23 出窗口、9/26 又弹回)。
+    const everMetBaseline =
+      baseWeekly > 0 &&
+      series.some((p) => {
+        if (p.date < resumeDate || p.date > today) return false;
+        const idx = series.indexOf(p);
+        const trailing7 = sumLoad(series.slice(Math.max(0, idx - 6), idx + 1));
+        return trailing7 >= baseWeekly;
+      });
+    if (daysBetween(resumeDate, today) >= RETURN_MAX_DAYS || everMetBaseline) {
       return { phase: "normal", note: null };
     }
   }

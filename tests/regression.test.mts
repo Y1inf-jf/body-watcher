@@ -41,7 +41,8 @@ function sleepRow(
 }
 
 describe("睡眠债口径", () => {
-  // 近 7 晚实际睡眠 ~480,昨晚在床 470 但醒 90 → 实际 380 → 债 ≈100(旧口径:在床 470,债为负)
+  // 近 7 晚实际睡眠均值 ~480;昨晚在床 470 但醒 90 → 实际睡眠 380,前晚正常 480 →
+  // 加权(⅔ 昨晚 + ⅓ 前晚)≈413 → 债 ≈67(旧口径直接用在床时长 470 算,反而得出盈余)
   const worstLastNight = () =>
     computeRecoveryFeatures([
       sleepRow("2026-09-01", 480), sleepRow("2026-09-02", 480), sleepRow("2026-09-03", 480),
@@ -74,7 +75,7 @@ describe("睡眠债口径", () => {
     assert.ok(debt !== null && debt >= 15 && debt <= 30, `debt=${debt}`);
   });
 
-  test("连续两晚都差 → 债按两晚计(≈100)", () => {
+  test("连续两晚都差 → 债按两晚计(≈86)", () => {
     const rows = [
       ...Array.from({ length: 7 }, (_, i) => sleepRow(`2026-09-0${i + 1}`, 480)),
       sleepRow("2026-09-08", 380), sleepRow("2026-09-09", 380),
@@ -653,6 +654,21 @@ describe("手环运动会话", () => {
     assert.equal(sessions.length, 1);
   });
 
+  test("单点 startTime 不可解析且无 civilStartTime → 跳过该点,不抛错,其余照常", () => {
+    const badPoint = workoutPayload() as Record<string, unknown>;
+    const badExercise = { ...(badPoint.exercise as Record<string, unknown>) };
+    (badExercise.interval as Record<string, unknown>) = {
+      ...(badExercise.interval as Record<string, unknown>),
+      startTime: "not-a-date",
+      civilStartTime: undefined,
+    };
+    badPoint.exercise = badExercise;
+    assert.doesNotThrow(() => {
+      const sessions = sessionsFromRawPayloads([JSON.stringify([badPoint, workoutPayload()])]);
+      assert.equal(sessions.length, 1);
+    });
+  });
+
   test("时长修正:单条训练取手环 WORKOUT 时长", () => {
     const logs: TrainingLogRow[] = [{ date: "2026-09-23", duration: 12 }];
     const sessions = [mkSession({ date: "2026-09-23", exerciseType: "WORKOUT", recordingMethod: "ACTIVELY_MEASURED", startTime: "2026-09-23T04:18:04Z", endTime: "2026-09-23T05:10:24Z", activeMinutes: 52.3 })];
@@ -797,6 +813,13 @@ describe("回归期", () => {
     assert.equal(ctx.phase, "normal");
   });
 
+  // 粘性退出:9/23 的近 7 天负荷(9/17–9/23=84+37+61=182)已达到基准周负荷 125,
+  // 但到 9/26 时窗口已滚动为 9/20–9/26(只剩 9/21+9/23=98),旧逻辑会"退回"回归期。
+  test("曾经达标过 → 粘性退出,不因负荷滚出窗口又弹回回归期", () => {
+    const ctx = computeLoadContext(mkSeries("2026-09-26", 63, afterReturn()), sickRows(), "2026-09-26");
+    assert.equal(ctx.phase, "normal");
+  });
+
   test("只有停训没有生病信号 → reason=gap", () => {
     const ctx = computeLoadContext(mkSeries("2026-09-21", 63, { ...preIllness(), "2026-09-21": 20 }), [], "2026-09-21");
     assert.equal(ctx.phase, "return");
@@ -831,6 +854,25 @@ describe("回归期", () => {
 
   test("新用户(停训前没有任何负荷)→ 不进回归期", () => {
     assert.equal(computeLoadContext(mkSeries("2026-09-20", 63, {}), [], "2026-09-20").phase, "normal");
+  });
+
+  // 只生病、从未连续停训 7 天:08-31–09-05 空窗只有 6 天(不触发"停训"识别),
+  // 09-03、09-04 是生病信号日,09-06 恢复训练。应仍判定回归期(reason=illness),
+  // resumeDate = 信号日之后的首个训练日,而非停训判定。
+  test("只有生病信号、训练从未连续停 7 天 → 仍判回归期(illness),resumeDate=信号后首个训练日", () => {
+    const loads: Record<string, number> = {};
+    for (let i = 0; shiftDate("2026-07-01", i * 2) <= "2026-08-30"; i++) loads[shiftDate("2026-07-01", i * 2)] = 50;
+    for (let i = 0; shiftDate("2026-09-06", i * 2) <= "2026-09-20"; i++) loads[shiftDate("2026-09-06", i * 2)] = 50;
+    const rows: GoogleMetricRow[] = [
+      ...Array.from({ length: 20 }, (_, i) => ({ date: shiftDate("2026-08-01", i), respiratory_rate: 16.4 })),
+      { date: "2026-09-03", respiratory_rate: 18.2 },
+      { date: "2026-09-04", respiratory_rate: 18.8 },
+    ];
+    const ctx = computeLoadContext(mkSeries("2026-09-07", 63, loads), rows, "2026-09-07");
+    assert.equal(ctx.phase, "return");
+    if (ctx.phase !== "return") return;
+    assert.equal(ctx.reason, "illness");
+    assert.equal(ctx.resumeDate, "2026-09-06");
   });
 });
 
@@ -869,6 +911,22 @@ describe("今日建议结合回归期", () => {
     const r = computeReadiness(mkStatus("under", 0), mkScore(55));
     assert.doesNotMatch(`${r.loadPart}`, /欠训练/);
     assert.equal(ACWR_ZONE_META.under.label, "负荷偏低");
+  });
+
+  test("回归期 + ACWR 急性峰值 → 不因回归期放过降档护栏", () => {
+    const r = computeReadiness(mkStatus("risk", 0), mkScore(55), { loadContext: returnCtx(30) });
+    assert.notEqual(r.level, "normal");
+  });
+
+  test("回归期 + form 疲劳积累 → 护栏仍生效(hold)", () => {
+    const r = computeReadiness(mkStatus("optimal", -15), mkScore(55), { loadContext: returnCtx(30) });
+    assert.equal(r.level, "downgrade");
+  });
+
+  test("回归期 + ACWR 偏高(非 risk/非疲劳) → 仍正常练,负荷说明带 ACWR 偏高", () => {
+    const r = computeReadiness(mkStatus("high", 0), mkScore(55), { loadContext: returnCtx(30) });
+    assert.equal(r.level, "normal");
+    assert.match(r.loadPart ?? "", /偏高/);
   });
 });
 

@@ -72,15 +72,17 @@ interface LoadBandResult {
 
 const FORM_LABEL: Record<FormZone, string> = { fresh: "新鲜", neutral: "平衡", fatigued: "疲劳积累" };
 
+function acwrZoneLabel(zone: NonNullable<TrainingStatus["acwr"]["zone"]>): string {
+  return zone === "under" ? "负荷偏低" : zone === "optimal" ? "最优" : zone === "high" ? "偏高" : "急性峰值";
+}
+
 export function classifyLoadBand(
   status: TrainingStatus,
   opts: { loadContext?: LoadContext | null; recoveryBand?: RecoveryBand } = {}
 ): LoadBandResult {
-  // 回归期优先:此时 ACWR 偏低是应该的,解读交给回归期上限。超上限只提示(note 里已带),不降档。
-  if (opts.loadContext?.phase === "return") {
-    return { band: "ramp", note: opts.loadContext.note };
-  }
-
+  // 回归期:ACWR 偏低是应该的,解读交给回归期上限,超上限只提示、不降档。
+  // 但护栏不能关掉——ACWR 急性峰值(risk)仍然降档,form 疲劳积累仍然封顶,规则见下方判定。
+  const isReturn = opts.loadContext?.phase === "return";
   const { acwr, form, weekly } = status;
   const parts: string[] = [];
   let band: LoadBand = "maintain";
@@ -89,10 +91,10 @@ export function classifyLoadBand(
   if (acwr.zone === null) {
     parts.push("负荷数据累计中");
   } else {
-    parts.push(`ACWR ${acwr.value?.toFixed(2)} ${acwr.zone === "under" ? "负荷偏低" : acwr.zone === "optimal" ? "最优" : acwr.zone === "high" ? "偏高" : "急性峰值"}`);
+    parts.push(`ACWR ${acwr.value?.toFixed(2)} ${acwrZoneLabel(acwr.zone)}`);
     if (acwr.zone === "risk") band = "deload";
-    else if (acwr.zone === "high") band = "hold";
-    else if (acwr.zone === "under") {
+    else if (!isReturn && acwr.zone === "high") band = "hold";
+    else if (!isReturn && acwr.zone === "under") {
       // 负荷偏低只在恢复好时才等于"可加量";恢复一般/偏低时低负荷本身是合理的。
       // 老调用方不传 recoveryBand 时保持原行为。
       const rb = opts.recoveryBand;
@@ -115,6 +117,14 @@ export function classifyLoadBand(
   if (status.allSessionsEstimated && band === "build") {
     parts.push("负荷由组数和时长估算，不据此加量");
     band = "maintain";
+  }
+
+  if (isReturn) {
+    if (band === "deload") return { band, note: `${parts.join("，")}——负荷突变，有受伤风险` };
+    if (band === "hold") return { band, note: `${parts.join("，")}——不再加量` };
+    const loadContext = opts.loadContext as Extract<LoadContext, { phase: "return" }>;
+    const acwrSuffix = acwr.zone !== null && acwr.value != null ? `；ACWR ${acwr.value.toFixed(2)} ${acwrZoneLabel(acwr.zone)}` : "";
+    return { band: "ramp", note: `${loadContext.note}${acwrSuffix}` };
   }
 
   const noteMap: Record<LoadBand, string> = {

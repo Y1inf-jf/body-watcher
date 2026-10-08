@@ -12,7 +12,8 @@ export interface ExtraActivity {
   label: string;
 }
 
-// 心率四区负荷对有氧/球类约为 sRPE/6 口径的 2 倍(9/19:心率 167 AU vs RPE7×80分钟/6 ≈ 93),折半对齐。
+// 心率四区负荷对有氧/球类约为 sRPE/6 口径的 2 倍(9/19:含轻度区的心率负荷 ≈182 AU,
+// ×0.5≈91 AU,对照 RPE7×80分钟/6 ≈ 93 AU,比值约 2.0),折半对齐。
 export const EXTRA_HR_LOAD_FACTOR = 0.5;
 const COMMUTE_TYPES = new Set(["WALKING", "BIKING"]); // 走路/通勤,不算训练
 const MERGE_GAP_MS = 10 * 60 * 1000; // 间隔 ≤10 分钟视为同一场(如热身有氧接比赛)

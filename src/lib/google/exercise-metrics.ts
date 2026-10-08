@@ -159,8 +159,13 @@ export function sessionsFromRawPayloads(payloads: string[]): ExerciseSession[] {
     }
     if (!Array.isArray(points)) continue;
     for (const p of points) {
-      const s = parseExerciseSession(p);
-      if (s) out.push(s);
+      try {
+        const s = parseExerciseSession(p);
+        if (s) out.push(s);
+      } catch {
+        // 单点 startTime 不可解析(如损坏的时间戳)时跳过该点,不让整次回填/启动失败。
+        continue;
+      }
     }
   }
   return out;
