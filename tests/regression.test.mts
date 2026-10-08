@@ -24,7 +24,7 @@ import {
 } from "../src/lib/login-throttle";
 import type { GoogleMetricRow, TrainingLogRow } from "../src/lib/recovery";
 import { parseExerciseSession, sessionsFromRawPayloads, type ExerciseSession } from "../src/lib/google/exercise-metrics";
-import { correctDurations, extraActivities } from "../src/lib/session-merge";
+import { correctDurations, extraActivities, type ExtraActivity } from "../src/lib/session-merge";
 
 function sleepRow(
   date: string,
@@ -322,6 +322,8 @@ function mkStatus(acwrZone: string | null, formValue: number | null, monoWarn = 
     estimatedSessions: 0,
     totalSessions: load7d > 0 ? 5 : 0,
     allSessionsEstimated: false,
+    durationCorrected: 0,
+    extraActivities: [],
   } as unknown as ReturnType<typeof computeTrainingStatus>;
 }
 
@@ -703,5 +705,34 @@ describe("手环运动会话", () => {
       mkSession({ date: "2026-09-19", exerciseType: "SPORT", startTime: "2026-09-19T07:40:00Z", endTime: "2026-09-19T08:05:00Z", activeMinutes: 25, zoneModerateS: 1200 }),
     ]);
     assert.equal(acts.length, 0); // 各 20 分钟中强度,单独都不足 30 分钟
+  });
+});
+
+describe("训练状态接入手环会话", () => {
+  const ball = (): ExtraActivity[] => [{ date: "2026-09-19", minutes: 81, load: 84, label: "球类" }];
+  const lift = (): TrainingLogRow[] => [
+    { date: "2026-09-21", duration: 32, durationSource: "wearable", exercises: [{ sets: 20 }] },
+  ];
+
+  test("额外活动按日计入负荷序列", () => {
+    const s = computeTrainingStatus(lift(), { today: "2026-09-24", extraActivities: ball() });
+    assert.equal(s.series.find((p) => p.date === "2026-09-19")?.load, 84);
+    assert.equal(s.totalSessions, 2);
+    assert.equal(s.extraActivities.length, 1);
+  });
+
+  test("额外活动不改变无 RPE 模式判定", () => {
+    const s = computeTrainingStatus(lift(), { today: "2026-09-24", extraActivities: ball() });
+    assert.equal(s.allSessionsEstimated, true);
+  });
+
+  test("统计时长被手环修正的训练次数", () => {
+    assert.equal(computeTrainingStatus(lift(), { today: "2026-09-24" }).durationCorrected, 1);
+  });
+
+  test("窗口外的额外活动不计入", () => {
+    const s = computeTrainingStatus([], { today: "2026-12-01", extraActivities: ball() });
+    assert.equal(s.extraActivities.length, 0);
+    assert.equal(s.totalSessions, 0);
   });
 });

@@ -5,6 +5,7 @@
 // 选这个量纲是为了对齐 TrainingPeaks CTL/ATL/TSB 的既有分区经验(+5/-10),
 // 直接用 sRPE 原始量纲(400+/次)会让 form 的经验阈值完全失效。
 import { localToday, type SleepSummary, type TrainingLogRow } from "./recovery";
+import type { ExtraActivity } from "./session-merge";
 
 // ---------- 每日负荷序列 ----------
 
@@ -71,7 +72,8 @@ export function sessionLoadOf(log: TrainingLogRow): {
 export function buildDailyLoadSeries(
   logs: TrainingLogRow[],
   days: number,
-  today: string = localToday()
+  today: string = localToday(),
+  extras: ExtraActivity[] = []
 ): DailyLoadPoint[] {
   const byDate = new Map<
     string,
@@ -89,6 +91,18 @@ export function buildDailyLoadSeries(
       if (rpe !== null) day.rpe = rpe;
     } else {
       byDate.set(log.date, { load, rpe, estimated, sessions: 1, estimatedSessions: estimated ? 1 : 0 });
+    }
+  }
+
+  // 手环额外活动(打球等):负荷已折算到同一量纲;不算"估计 RPE"。
+  for (const a of extras) {
+    if (a.load <= 0) continue;
+    const day = byDate.get(a.date);
+    if (day) {
+      day.load += a.load;
+      day.sessions += 1;
+    } else {
+      byDate.set(a.date, { load: a.load, rpe: null, estimated: false, sessions: 1, estimatedSessions: 0 });
     }
   }
 
@@ -372,18 +386,26 @@ export interface TrainingStatus {
   totalSessions: number;
   // 训记未提供任何 RPE 时开启:估算值仅用于趋势,不据此建议加量。
   allSessionsEstimated: boolean;
+  durationCorrected: number; // 窗口内训练时长被手环 WORKOUT 修正的次数
+  extraActivities: ExtraActivity[]; // 窗口内计入的手环额外活动(打球等)
   hr?: HrLoadStatus; // 心率负荷对照(数据来自 Google 同步,调用方有就带上)
 }
 
 // 默认 35 天窗口:28 天慢性池 + 7 天缓冲(EWMA 初值衰减)。
 export function computeTrainingStatus(
   logs: TrainingLogRow[],
-  opts: { days?: number; today?: string } = {}
+  opts: { days?: number; today?: string; extraActivities?: ExtraActivity[] } = {}
 ): TrainingStatus {
   const days = opts.days ?? 35;
-  const full = buildDailyLoadSeries(logs, days, opts.today);
+  const full = buildDailyLoadSeries(logs, days, opts.today, opts.extraActivities ?? []);
+  const windowStart = full[0]?.date ?? "";
+  const windowEnd = full[full.length - 1]?.date ?? "";
+  const inWindow = (d: string) => d >= windowStart && d <= windowEnd;
+  const extras = (opts.extraActivities ?? []).filter((a) => a.load > 0 && inWindow(a.date));
   const estimatedSessions = full.reduce((acc, p) => acc + p.estimatedSessions, 0);
   const totalSessions = full.reduce((acc, p) => acc + p.sessions, 0);
+  // 无 RPE 模式只看训记训练:额外活动的负荷来自心率,不该把"全部估算"判定翻掉。
+  const liftingSessions = totalSessions - extras.length;
   return {
     series: full.slice(-28),
     yesterdayLoad: full.length >= 2 ? full[full.length - 2].load : 0,
@@ -392,6 +414,8 @@ export function computeTrainingStatus(
     weekly: computeWeeklyLoad(full),
     estimatedSessions,
     totalSessions,
-    allSessionsEstimated: totalSessions > 0 && estimatedSessions === totalSessions,
+    allSessionsEstimated: liftingSessions > 0 && estimatedSessions === liftingSessions,
+    durationCorrected: logs.filter((l) => l.durationSource === "wearable" && inWindow(String(l.date))).length,
+    extraActivities: extras,
   };
 }
