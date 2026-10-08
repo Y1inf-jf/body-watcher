@@ -25,6 +25,8 @@ import {
 import type { GoogleMetricRow, TrainingLogRow } from "../src/lib/recovery";
 import { parseExerciseSession, sessionsFromRawPayloads, type ExerciseSession } from "../src/lib/google/exercise-metrics";
 import { correctDurations, extraActivities, type ExtraActivity } from "../src/lib/session-merge";
+import { computeLoadContext, illnessSignalDays, shiftDate } from "../src/lib/load-context";
+import type { DailyLoadPoint } from "../src/lib/training-status";
 
 function sleepRow(
   date: string,
@@ -734,5 +736,98 @@ describe("训练状态接入手环会话", () => {
     const s = computeTrainingStatus([], { today: "2026-12-01", extraActivities: ball() });
     assert.equal(s.extraActivities.length, 0);
     assert.equal(s.totalSessions, 0);
+  });
+});
+
+// 以 today 为终点、共 days 天的负荷序列;loads 以日期为键。
+function mkSeries(today: string, days: number, loads: Record<string, number>): DailyLoadPoint[] {
+  return Array.from({ length: days }, (_, i) => {
+    const date = shiftDate(today, i - (days - 1));
+    const load = loads[date] ?? 0;
+    return { date, load, rpeUsed: null, estimated: false, sessions: load > 0 ? 1 : 0, estimatedSessions: 0 };
+  });
+}
+
+// 病前每 3 天练一次、每次 50 AU(8/15..9/11 共 10 次 → 基准周负荷 125,首周上限 75);
+// 9/12–9/18 停训(生病),9/19 打球 84,9/21 练 37,9/23 练 61
+const preIllness = (): Record<string, number> => {
+  const out: Record<string, number> = {};
+  for (let i = 0; i < 10; i++) out[shiftDate("2026-08-15", i * 3)] = 50;
+  return out;
+};
+const afterReturn = (): Record<string, number> => ({ ...preIllness(), "2026-09-19": 84, "2026-09-21": 37, "2026-09-23": 61 });
+const sickRows = (): GoogleMetricRow[] => [
+  ...Array.from({ length: 20 }, (_, i) => ({ date: shiftDate("2026-08-28", i), respiratory_rate: 16.4 })),
+  { date: "2026-09-17", respiratory_rate: 18.2, temp_night_c: 33.54, temp_baseline_c: 32.3 },
+  { date: "2026-09-18", respiratory_rate: 18.8 },
+];
+
+describe("生病信号", () => {
+  test("呼吸率高于前 30 天中位数 1 次/分、体温高 1°C 都算信号日", () => {
+    assert.deepEqual(illnessSignalDays(sickRows()), ["2026-09-17", "2026-09-18"]);
+  });
+
+  test("体温偏差 0.9 不算", () => {
+    assert.deepEqual(illnessSignalDays([{ date: "2026-09-17", temp_night_c: 33.2, temp_baseline_c: 32.3 }]), []);
+  });
+
+  test("前序样本不足 5 天时不判呼吸率", () => {
+    assert.deepEqual(illnessSignalDays([{ date: "2026-09-01", respiratory_rate: 16 }, { date: "2026-09-02", respiratory_rate: 20 }]), []);
+  });
+});
+
+describe("回归期", () => {
+  test("病后第 1 周:额度已用完只提示", () => {
+    const ctx = computeLoadContext(mkSeries("2026-09-21", 63, afterReturn()), sickRows(), "2026-09-21");
+    assert.equal(ctx.phase, "return");
+    if (ctx.phase !== "return") return;
+    assert.equal(ctx.reason, "illness");
+    assert.equal(ctx.resumeDate, "2026-09-19");
+    assert.equal(ctx.week, 1);
+    assert.equal(ctx.weekLoad, 121);
+    assert.equal(ctx.weekCap, 75);
+    assert.ok(ctx.remaining !== null && ctx.remaining < 0);
+    assert.match(ctx.note, /额度已用完/);
+  });
+
+  test("近 7 天负荷回到病前周均 → 退出回归期", () => {
+    const ctx = computeLoadContext(mkSeries("2026-09-24", 63, afterReturn()), sickRows(), "2026-09-24");
+    assert.equal(ctx.phase, "normal");
+  });
+
+  test("只有停训没有生病信号 → reason=gap", () => {
+    const ctx = computeLoadContext(mkSeries("2026-09-21", 63, { ...preIllness(), "2026-09-21": 20 }), [], "2026-09-21");
+    assert.equal(ctx.phase, "return");
+    if (ctx.phase === "return") assert.equal(ctx.reason, "gap");
+  });
+
+  test("停训仍在持续 → week=0、resumeDate=null,给首周上限", () => {
+    const ctx = computeLoadContext(mkSeries("2026-09-20", 63, preIllness()), [], "2026-09-20");
+    assert.equal(ctx.phase, "return");
+    if (ctx.phase !== "return") return;
+    assert.equal(ctx.week, 0);
+    assert.equal(ctx.resumeDate, null);
+    assert.equal(ctx.weekCap, 75);
+    assert.match(ctx.note, /尚未恢复训练/);
+  });
+
+  test("恢复训练满 21 天 → 退出;第 20 天仍在第 3 周", () => {
+    const loads: Record<string, number> = { ...preIllness() };
+    for (let i = 0; i <= 21; i += 3) loads[shiftDate("2026-09-19", i)] = 10;
+    const day20 = computeLoadContext(mkSeries("2026-10-09", 63, loads), [], "2026-10-09");
+    assert.equal(day20.phase, "return");
+    if (day20.phase === "return") assert.equal(day20.week, 3);
+    assert.equal(computeLoadContext(mkSeries("2026-10-10", 63, loads), [], "2026-10-10").phase, "normal");
+  });
+
+  test("单日生病信号、无停训 → 不进回归期", () => {
+    const loads: Record<string, number> = {};
+    for (let i = 0; i < 20; i++) loads[shiftDate("2026-08-20", i * 2)] = 50;
+    const rows: GoogleMetricRow[] = [{ date: "2026-09-10", temp_night_c: 33.6, temp_baseline_c: 32.3 }];
+    assert.equal(computeLoadContext(mkSeries("2026-09-15", 63, loads), rows, "2026-09-15").phase, "normal");
+  });
+
+  test("新用户(停训前没有任何负荷)→ 不进回归期", () => {
+    assert.equal(computeLoadContext(mkSeries("2026-09-20", 63, {}), [], "2026-09-20").phase, "normal");
   });
 });
