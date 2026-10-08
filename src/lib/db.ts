@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 import type { SleepTargets } from "./recovery";
+import { sessionsFromRawPayloads, type ExerciseSession } from "./google/exercise-metrics";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "body-watcher.db");
@@ -219,6 +220,22 @@ function createTables(db: Database.Database) {
       UNIQUE(data_type, data_date)
     );
 
+    CREATE TABLE IF NOT EXISTS google_exercise_sessions (
+      id TEXT PRIMARY KEY,
+      date TEXT NOT NULL,
+      start_time TEXT,
+      end_time TEXT,
+      exercise_type TEXT,
+      recording_method TEXT,
+      active_minutes REAL,
+      zone_light_s INTEGER DEFAULT 0,
+      zone_moderate_s INTEGER DEFAULT 0,
+      zone_vigorous_s INTEGER DEFAULT 0,
+      zone_peak_s INTEGER DEFAULT 0,
+      avg_hr INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_exercise_sessions_date ON google_exercise_sessions(date);
+
     CREATE TABLE IF NOT EXISTS google_sync_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       started_at TEXT,
@@ -319,6 +336,16 @@ function migrate(db: Database.Database) {
   }
   // 索引放在迁移之后建:老库里 session_id 列是 ALTER 补的,SCHEMA 阶段建索引会直接报错。
   db.exec("CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id)");
+
+  // 手环逐段运动:新表为空时从原始快照回填(本地与服务器各自在启动时完成,幂等)。
+  const sessionCount = db.prepare("SELECT COUNT(*) AS n FROM google_exercise_sessions").get() as { n: number };
+  if (sessionCount.n === 0) {
+    const raws = db
+      .prepare("SELECT payload FROM google_raw_data WHERE data_type = 'exercise'")
+      .all() as { payload: string }[];
+    const sessions = sessionsFromRawPayloads(raws.map((r) => r.payload));
+    if (sessions.length > 0) writeExerciseSessions(db, sessions);
+  }
 }
 
 // --- App settings（用户可调参数，KV 存储） ---
@@ -1554,6 +1581,53 @@ export function saveGoogleRawData(dataType: string, dataDate: string, points: un
       payload = excluded.payload,
       fetched_at = excluded.fetched_at
   `).run(dataType, dataDate, points.length, JSON.stringify(points));
+}
+
+// 手环逐段运动。按 dataPoint name 幂等 upsert;内部函数收 db 参数,供 migrate 回填时使用(避免递归 getDb)。
+function writeExerciseSessions(db: Database.Database, sessions: ExerciseSession[]) {
+  const stmt = db.prepare(`
+    INSERT INTO google_exercise_sessions
+      (id, date, start_time, end_time, exercise_type, recording_method, active_minutes,
+       zone_light_s, zone_moderate_s, zone_vigorous_s, zone_peak_s, avg_hr)
+    VALUES (@id, @date, @startTime, @endTime, @exerciseType, @recordingMethod, @activeMinutes,
+       @zoneLightS, @zoneModerateS, @zoneVigorousS, @zonePeakS, @avgHr)
+    ON CONFLICT(id) DO UPDATE SET
+      date = excluded.date, start_time = excluded.start_time, end_time = excluded.end_time,
+      exercise_type = excluded.exercise_type, recording_method = excluded.recording_method,
+      active_minutes = excluded.active_minutes, zone_light_s = excluded.zone_light_s,
+      zone_moderate_s = excluded.zone_moderate_s, zone_vigorous_s = excluded.zone_vigorous_s,
+      zone_peak_s = excluded.zone_peak_s, avg_hr = excluded.avg_hr
+  `);
+  db.transaction(() => {
+    for (const s of sessions) stmt.run(s);
+  })();
+}
+
+export function upsertExerciseSessions(sessions: ExerciseSession[]) {
+  if (sessions.length > 0) writeExerciseSessions(getDb(), sessions);
+}
+
+export function queryExerciseSessions(days: number): ExerciseSession[] {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT * FROM google_exercise_sessions
+    WHERE date >= date('now', 'localtime', '-' || ? || ' days')
+    ORDER BY start_time ASC
+  `).all(days) as Record<string, unknown>[];
+  return rows.map((r) => ({
+    id: String(r.id),
+    date: String(r.date),
+    startTime: String(r.start_time ?? ""),
+    endTime: String(r.end_time ?? ""),
+    exerciseType: String(r.exercise_type ?? "UNKNOWN"),
+    recordingMethod: String(r.recording_method ?? "UNKNOWN"),
+    activeMinutes: Number(r.active_minutes ?? 0),
+    zoneLightS: Number(r.zone_light_s ?? 0),
+    zoneModerateS: Number(r.zone_moderate_s ?? 0),
+    zoneVigorousS: Number(r.zone_vigorous_s ?? 0),
+    zonePeakS: Number(r.zone_peak_s ?? 0),
+    avgHr: r.avg_hr == null ? null : Number(r.avg_hr),
+  }));
 }
 
 export function queryGoogleRawTypeCounts(date: string) {

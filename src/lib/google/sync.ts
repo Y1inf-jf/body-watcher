@@ -6,6 +6,7 @@ import {
   getLastSuccessfulSyncDate,
   insertSyncLog,
   saveGoogleRawData,
+  upsertExerciseSessions,
   upsertGoogleDailyMetrics,
   type GoogleDailyMetricsInput,
 } from "@/lib/db";
@@ -16,7 +17,9 @@ import {
   emptyExerciseDay,
   exercisePointDate,
   parseExercisePoint,
+  parseExerciseSession,
   type ExerciseDayAgg,
+  type ExerciseSession,
 } from "./exercise-metrics";
 
 type MetricsPartial = Omit<GoogleDailyMetricsInput, "date">;
@@ -325,6 +328,7 @@ async function syncAll(): Promise<SyncResult> {
     const since = computeSinceDate();
     const metrics: MetricsMap = new Map();
     const rawByDate = new Map<string, unknown[]>();
+    const sessions: ExerciseSession[] = [];
 
     // 睡眠：不支持 interval 过滤，直接按最近会话分页拉。
     try {
@@ -347,6 +351,10 @@ async function syncAll(): Promise<SyncResult> {
         points = await listGoogleDataPoints(token, "exercise", { pageSize: SESSION_PAGE_SIZE, maxPages: 10 });
       }
       parseExerciseIntoMetrics(metrics, rawByDate, points);
+      for (const p of points) {
+        const s = parseExerciseSession(p);
+        if (s) sessions.push(s);
+      }
       types.exercise = points.length;
     } catch (e) {
       errors.push(`运动: ${(e as Error).message}`);
@@ -398,6 +406,7 @@ async function syncAll(): Promise<SyncResult> {
         saveGoogleRawData(dataType, date, points);
       }
       for (const [date, partial] of metrics) upsertGoogleDailyMetrics({ date, ...partial });
+      upsertExerciseSessions(sessions);
     });
     write();
 
