@@ -18,6 +18,7 @@ import MonthlyReview from "@/components/MonthlyReview";
 import type { RecoveryFeatures, RecoveryScore } from "@/lib/recovery";
 import type { Readiness } from "@/lib/readiness";
 import type { SleepNeedResult, TrainingStatus } from "@/lib/training-status";
+import type { LoadContext } from "@/lib/load-context";
 
 interface DashboardData {
   healthMetrics: Record<string, unknown>[];
@@ -27,6 +28,7 @@ interface DashboardData {
   trainingStatus?: TrainingStatus;
   sleepNeed?: SleepNeedResult | null;
   readiness?: Readiness;
+  loadContext?: LoadContext;
   today?: string;
   advice?: AdviceView;
   insights?: InsightView[];
@@ -146,7 +148,7 @@ export default function DashboardPage() {
       {data.recovery && (
         <div className="grid gap-4 lg:grid-cols-2">
           <RecoveryScoreCard features={data.recovery.features} score={data.recovery.score} sleepNeed={data.sleepNeed ?? null} />
-          {data.trainingStatus && <TrainingStatusCard status={data.trainingStatus} />}
+          {data.trainingStatus && <TrainingStatusCard status={data.trainingStatus} loadContext={data.loadContext ?? null} />}
         </div>
       )}
 

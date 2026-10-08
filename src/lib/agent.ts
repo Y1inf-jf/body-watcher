@@ -96,7 +96,7 @@ ${profileBlock}
 2. **肌群恢复**：力量训练后肌群需要 48-72 小时恢复，间隔不足则跳过该肌群（用户笔记另有说明时以笔记为准）
 3. **HRV 信号**：可穿戴设备的 HRV rMSSD z-score ≤ -1，或较基线下降超过 10%，提示身体压力较大，应降低训练强度；基线未就绪时按原始值趋势判断
 4. **恢复分**：query_recovery_status 会返回综合恢复分（0-100，50=自己的正常水平）。红色（<34）当天只安排轻松恢复活动；黄色（34-66）正常训练但不冲 PR；绿色（>=67）可上强度。分数为 null 时按 HRV/静息心率/睡眠分项信号判断，并说明基线累计进度
-5. **训练状态**：query_recovery_status 返回 trainingStatus——ACWR 急慢性比（<0.8 欠训练可加量；0.8-1.3 最优区间维持；1.3-1.5 偏高不再加量；>1.5 急性峰值，只做轻松恢复）、form 体力-疲劳（>+5 新鲜可冲；-10~+5 平衡；<-10 疲劳积累应减量）、周负荷/单调性（单调性>2 说明训练内容太单一，建议变换）、睡眠需求推荐。训记未提供 RPE 时，负荷按组数和时长估算；allSessionsEstimated=true 表示所有训练都是估算，只可用来观察趋势，绝不能因“欠训练”建议加量或冲强度。高负荷预警仍保守保留。trainingStatus.hr 是手环运动记录算出的心率负荷对照（hr.acwr 同一套分区）：两者方向一致时结论更可信；估算负荷与心率负荷背离时，不要凭任一侧单独下“欠训练”结论；心率侧 daysWithHr 少说明用户训练时没开手环运动模式，不要拿它否定估算趋势
+5. **训练状态**：query_recovery_status 返回 trainingStatus——ACWR 急慢性比（<0.8 负荷偏低——是否加量取决于恢复分与 loadContext，不能单凭它建议加量；0.8-1.3 最优区间维持；1.3-1.5 偏高不再加量；>1.5 急性峰值，只做轻松恢复）、form 体力-疲劳（>+5 新鲜可冲；-10~+5 平衡；<-10 疲劳积累应减量）、周负荷/单调性（单调性>2 说明训练内容太单一，建议变换）、睡眠需求推荐。训记未提供 RPE 时，负荷按组数和时长估算；allSessionsEstimated=true 表示所有训练都是估算，只可用来观察趋势，绝不能因“负荷偏低”建议加量或冲强度。高负荷预警仍保守保留。trainingStatus.hr 是手环运动记录算出的心率负荷对照（hr.acwr 同一套分区）：两者方向一致时结论更可信；估算负荷与心率负荷背离时，不要凭任一侧单独下“负荷偏低”结论；心率侧 daysWithHr 少说明用户训练时没开手环运动模式，不要拿它否定估算趋势。query_recovery_status 返回 loadContext：phase=return 表示病后/停训后的回归期——按 weekCap 循序加量、不安排冲强度或测极限；remaining≤0 时今天只维持量、不再加；trainingStatus.extraActivities 是手环记录的打球等额外运动（已计入负荷），durationCorrected 表示有几次训练时长按手环修正
 6. **今日建议**：query_recovery_status 返回 readiness——恢复分 × 训练负荷合成的练休结论（可以冲/正常练/主动降档/今天休息），与总览页"今日建议"卡同源。给出"今日建议"时结论与它保持一致；用户体感可以更严格（如"正常练"但用户头疼→降为休息），不要比它更宽松
 7. **静息心率**：静息心率较基线升高 5bpm 以上提示恢复不足
 8. **睡眠**：在床时长不足 6 小时、睡眠负债超过 45 分钟、或深睡占比低于 15% 时，避免大重量训练。用户设了睡眠目标（recovery.targets：min=债务参照地板、target=今晚建议地板、ideal=建议封顶）时，睡眠债按"目标与历史均值较高者"衡量，引用时说明这个口径
@@ -195,7 +195,7 @@ export function buildExerciseBaseline(logs: TrainingLogRow[]): ExerciseBaselineE
 export const agentTools: AgentTools = {
   query_recovery_status: tool({
     description:
-      "查询可穿戴设备恢复信号与训练状态：今日恢复分（0-100 及红/黄/绿档位）、HRV/静息心率相对基线的偏离（z-score）、昨晚睡眠各阶段与睡眠负债与今晚睡眠需求推荐、ACWR 急慢性负荷比与训练状态分区、form 体力-疲劳、周负荷/单调性/strain、心率负荷对照（trainingStatus.hr，手环运动记录算出的并行 ACWR）、近 7 天训练负荷汇总、各肌群恢复状态、exerciseBaseline（每个动作最近一次的实际组数与最强一组，排课时动作选择与重量的锚点）、近 14 天设备指标明细、readiness（与总览页同源的今日建议合成结论）",
+      "查询可穿戴设备恢复信号与训练状态：今日恢复分（0-100 及红/黄/绿档位）、HRV/静息心率相对基线的偏离（z-score）、昨晚睡眠各阶段与睡眠负债与今晚睡眠需求推荐、ACWR 急慢性负荷比与训练状态分区、form 体力-疲劳、周负荷/单调性/strain、心率负荷对照（trainingStatus.hr，手环运动记录算出的并行 ACWR）、近 7 天训练负荷汇总、各肌群恢复状态、exerciseBaseline（每个动作最近一次的实际组数与最强一组，排课时动作选择与重量的锚点）、近 14 天设备指标明细、readiness（与总览页同源的今日建议合成结论）、loadContext（回归期判定与本周负荷上限）",
     inputSchema: z.object({}),
     execute: async () => {
       // 与总览页 / 洞察规则共用同一口径(见 lib/daily-context.ts),避免卡片与教练各说各话。
@@ -205,6 +205,7 @@ export const agentTools: AgentTools = {
         recovery: ctx.recoveryFeatures,
         recoveryScore: ctx.recoveryScore,
         readiness: ctx.readiness,
+        loadContext: ctx.loadContext,
         trainingStatus: ctx.trainingStatus,
         sleepNeed: ctx.sleepNeed,
         // 近 7 天汇总与 trainingStatus 的周窗口同口径(都从同一份日志本地切片,不再发 N+1 查询)。

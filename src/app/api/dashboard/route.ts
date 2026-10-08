@@ -20,6 +20,7 @@ export async function GET() {
     trainingStatus,
     sleepNeed,
     readiness,
+    loadContext,
   } = ctx;
 
   const muscleRecovery = queryMuscleRecovery();
@@ -90,6 +91,7 @@ export async function GET() {
     trainingStatus,
     sleepNeed,
     readiness,
+    loadContext,
     today,
     advice,
     insights: getActiveInsights(),

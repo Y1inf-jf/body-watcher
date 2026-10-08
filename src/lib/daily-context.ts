@@ -9,6 +9,7 @@
 // 建议回填闭环(依赖 daily 记录)也断链。所以把写入抽成 settleDaily,由同步流程与总览页共用。
 import {
   getSleepTargets,
+  queryExerciseSessions,
   queryGoogleDailyMetricsRange,
   queryHealthMetrics,
   queryTrainingHistoryDetailed,
@@ -23,9 +24,11 @@ import {
   type GoogleMetricRow,
   type RecoveryFeatures,
   type RecoveryScore,
+  type SleepTargets,
   type TrainingLogRow,
 } from "./recovery";
 import {
+  buildDailyLoadSeries,
   computeHrLoadStatus,
   computeSleepNeed,
   computeTrainingStatus,
@@ -36,6 +39,9 @@ import {
 } from "./training-status";
 import { computeReadiness, type Readiness } from "./readiness";
 import { latestManualSleepQuality, mergeManualHealth } from "./health-merge";
+import { computeLoadContext, type LoadContext } from "./load-context";
+import { correctDurations, extraActivities } from "./session-merge";
+import type { ExerciseSession } from "./google/exercise-metrics";
 
 export interface DailyContext {
   today: string;
@@ -48,17 +54,76 @@ export interface DailyContext {
   trainingStatus: TrainingStatus;
   sleepNeed: SleepNeedResult | null;
   readiness: Readiness;
+  /** 回归期判定(停训/生病后的逐周负荷上限) */
+  loadContext: LoadContext;
   /** 最近一次训练日期(DESC 查询取首条),洞察的"停训空窗"规则用 */
   lastSessionDate: string | null;
   /** 原始训练记录(DESC,新→旧)。动作基线、周负荷汇总等要明细的调用方直接复用,不必再查一次 */
   trainingLogs: TrainingLogRow[];
 }
 
+// 回归期要看"中断前 28 天 + 中断 + 回归 21 天",训练与会话多取到 63 天。
+const LOAD_HISTORY_DAYS = 63;
+
+export interface DailyInputs {
+  today: string;
+  googleRows: GoogleMetricRow[]; // 升序
+  healthMetrics: Record<string, unknown>[];
+  logs: TrainingLogRow[]; // DESC(与 queryTrainingHistoryDetailed 一致)
+  sessions: ExerciseSession[];
+  sleepTargets: SleepTargets;
+  hr?: "none" | "summary" | "full";
+}
+
+/** 纯函数:给定原始输入算出当天全部派生结果。loadDailyContext 与回放脚本共用。 */
+export function deriveDailyContext(inp: DailyInputs): DailyContext {
+  const hr = inp.hr ?? "none";
+  const merged = mergeManualHealth(inp.googleRows, inp.healthMetrics);
+  const recoveryFeatures = computeRecoveryFeatures(merged, { sleepTargets: inp.sleepTargets });
+  const recoveryScore = computeRecoveryScore(recoveryFeatures);
+
+  // 训记计时不准时以手环 WORKOUT 时长为准;打球等只在手环里的运动折算后计入。
+  const logs = correctDurations(inp.logs, inp.sessions);
+  const extras = extraActivities(inp.sessions);
+  const trainingStatus = computeTrainingStatus(logs, { today: inp.today, extraActivities: extras });
+  if (hr !== "none") {
+    trainingStatus.hr = computeHrLoadStatus(hrLoadsByDateFromRows(inp.googleRows), inp.today);
+    if (hr === "full") trainingStatus.hr.daily = hrDailyFromRows(inp.googleRows);
+  }
+  const loadContext = computeLoadContext(
+    buildDailyLoadSeries(logs, LOAD_HISTORY_DAYS, inp.today, extras),
+    inp.googleRows,
+    inp.today
+  );
+
+  const sleepNeed = computeSleepNeed(recoveryFeatures.sleep, trainingStatus.yesterdayLoad, inp.sleepTargets);
+  const readiness = computeReadiness(trainingStatus, recoveryScore, {
+    manualSleepQuality: latestManualSleepQuality(inp.healthMetrics),
+    loadContext,
+  });
+
+  return {
+    today: inp.today,
+    googleRows: inp.googleRows,
+    healthMetrics: inp.healthMetrics,
+    recoveryFeatures,
+    recoveryScore,
+    trainingStatus,
+    sleepNeed,
+    readiness,
+    loadContext,
+    // logs 是 DESC:首条即最近一次训练。
+    lastSessionDate: logs.length > 0 ? String(logs[0].date) : null,
+    trainingLogs: logs,
+  };
+}
+
 /**
  * 单一口径入口:一次算出当天全部派生结果。
  *
  * - days 默认 35(28 天慢性池 + 7 天缓冲);恢复侧基线池只取最近 21 个样本,
- *   所以 30 与 35 对恢复分等价,统一到 35 不会改变分数。
+ *   所以 30 与 35 对恢复分等价,统一到 35 不会改变分数。训练记录与手环会话
+ *   至少取 63 天(回归期判定需要),更早的记录不影响 35 天训练状态窗口。
  * - hr 控制心率负荷对照的粒度:"none" 不算(默认,同步落档不需要);
  *   "summary" 只算汇总(教练工具用,带上逐日明细会让 tool payload 过大);
  *   "full" 额外带逐日明细(总览卡展开表用)。
@@ -67,44 +132,15 @@ export function loadDailyContext(
   opts: { days?: number; hr?: "none" | "summary" | "full" } = {}
 ): DailyContext {
   const days = opts.days ?? 35;
-  const hr = opts.hr ?? "none";
-  const googleRows = queryGoogleDailyMetricsRange(days) as GoogleMetricRow[];
-  const healthMetrics = queryHealthMetrics(30) as Record<string, unknown>[];
-
-  const merged = mergeManualHealth(googleRows, healthMetrics);
-  const sleepTargets = getSleepTargets();
-  const recoveryFeatures = computeRecoveryFeatures(merged, { sleepTargets });
-  const recoveryScore = computeRecoveryScore(recoveryFeatures);
-
-  const logs = queryTrainingHistoryDetailed(days) as TrainingLogRow[];
-  const trainingStatus = computeTrainingStatus(logs);
-  if (hr !== "none") {
-    trainingStatus.hr = computeHrLoadStatus(hrLoadsByDateFromRows(googleRows));
-    if (hr === "full") trainingStatus.hr.daily = hrDailyFromRows(googleRows);
-  }
-
-  const sleepNeed = computeSleepNeed(
-    recoveryFeatures.sleep,
-    trainingStatus.yesterdayLoad,
-    sleepTargets
-  );
-  const readiness = computeReadiness(trainingStatus, recoveryScore, {
-    manualSleepQuality: latestManualSleepQuality(healthMetrics),
-  });
-
-  return {
+  return deriveDailyContext({
     today: localToday(),
-    googleRows,
-    healthMetrics,
-    recoveryFeatures,
-    recoveryScore,
-    trainingStatus,
-    sleepNeed,
-    readiness,
-    // queryTrainingHistoryDetailed 是 DESC:首条即最近一次训练。
-    lastSessionDate: logs.length > 0 ? String(logs[0].date) : null,
-    trainingLogs: logs,
-  };
+    googleRows: queryGoogleDailyMetricsRange(days) as GoogleMetricRow[],
+    healthMetrics: queryHealthMetrics(30) as Record<string, unknown>[],
+    logs: queryTrainingHistoryDetailed(Math.max(days, LOAD_HISTORY_DAYS)) as TrainingLogRow[],
+    sessions: queryExerciseSessions(Math.max(days, LOAD_HISTORY_DAYS)),
+    sleepTargets: getSleepTargets(),
+    hr: opts.hr,
+  });
 }
 
 /**

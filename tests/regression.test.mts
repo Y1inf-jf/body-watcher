@@ -28,6 +28,7 @@ import { correctDurations, extraActivities, type ExtraActivity } from "../src/li
 import { computeLoadContext, illnessSignalDays, shiftDate } from "../src/lib/load-context";
 import type { DailyLoadPoint } from "../src/lib/training-status";
 import type { LoadContext } from "../src/lib/load-context";
+import { deriveDailyContext } from "../src/lib/daily-context";
 
 function sleepRow(
   date: string,
@@ -868,5 +869,34 @@ describe("今日建议结合回归期", () => {
     const r = computeReadiness(mkStatus("under", 0), mkScore(55));
     assert.doesNotMatch(`${r.loadPart}`, /欠训练/);
     assert.equal(ACWR_ZONE_META.under.label, "负荷偏低");
+  });
+});
+
+describe("每日上下文组装(端到端)", () => {
+  // 复用回归期夹具:病前每 3 天 50 AU(用 duration=50/rpe=6 → 50 AU),9/21 训记只记 12 分钟但手环 WORKOUT 32 分钟
+  const inputs = () => {
+    const logs: TrainingLogRow[] = [];
+    for (let i = 0; i < 10; i++) logs.push({ date: shiftDate("2026-08-15", i * 3), duration: 50, rpe: 6 });
+    logs.push({ date: "2026-09-21", duration: 12, exercises: [{ sets: 20 }] });
+    logs.reverse(); // 与 queryTrainingHistoryDetailed 一致:DESC
+    return {
+      today: "2026-09-21",
+      googleRows: sickRows(),
+      healthMetrics: [],
+      logs,
+      sessions: [
+        ...ballDay(),
+        mkSession({ date: "2026-09-21", exerciseType: "WORKOUT", recordingMethod: "ACTIVELY_MEASURED", startTime: "2026-09-21T04:13:00Z", endTime: "2026-09-21T04:45:00Z", activeMinutes: 31.8 }),
+      ],
+      sleepTargets: { minMinutes: null, targetMinutes: null, idealMinutes: null },
+    };
+  };
+
+  test("时长修正 + 打球计入 + 回归期全部接通", () => {
+    const ctx = deriveDailyContext(inputs());
+    assert.equal(ctx.trainingStatus.durationCorrected, 1);
+    assert.equal(ctx.trainingStatus.extraActivities.length, 1);
+    assert.equal(ctx.loadContext.phase, "return");
+    assert.match(ctx.readiness.loadPart ?? "", /回归期第 1 周/);
   });
 });

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { HrDay, HrLoadStatus, TrainingStatus } from "@/lib/training-status";
+import type { LoadContext } from "@/lib/load-context";
 import { ACWR_ZONE_META, FORM_ZONE_META } from "@/lib/zone-meta";
 import { Card, CardTitle } from "./ui/Card";
 import GaugeRing from "./ui/GaugeRing";
@@ -27,7 +28,13 @@ function StatBlock({
 }
 
 // 训练状态卡:ACWR 圆环 + form / 周负荷 / 单调性 + 28 天负荷迷你柱状图。
-export default function TrainingStatusCard({ status }: { status: TrainingStatus }) {
+export default function TrainingStatusCard({
+  status,
+  loadContext = null,
+}: {
+  status: TrainingStatus;
+  loadContext?: LoadContext | null;
+}) {
   const acwrZone = status.acwr.zone ? ACWR_ZONE_META[status.acwr.zone] : null;
   const formZone = status.form.zone ? FORM_ZONE_META[status.form.zone] : null;
   // 环满刻度 = 2.0:1.0(平衡)落在半环,>1.5(风险区)逼近满环,视觉上一眼可辨
@@ -36,16 +43,24 @@ export default function TrainingStatusCard({ status }: { status: TrainingStatus 
 
   const maxLoad = Math.max(...status.series.map((p) => p.load), 1);
   const today = status.series[status.series.length - 1];
+  const ret = loadContext?.phase === "return" ? loadContext : null;
 
   return (
     <Card glowColor={acwrZone?.hex} className="animate-fade-up p-5">
       <CardTitle
         right={
-          status.weekly.monotonyWarning ? (
-            <span className="rounded border border-zone-amber/40 bg-zone-amber/10 px-1.5 py-0.5 font-mono text-[10px] text-zone-amber">
-              ⚠ 单调性 {status.weekly.monotony}
-            </span>
-          ) : null
+          <div className="flex items-center gap-2">
+            {ret && (
+              <span className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] text-accent">
+                回归期 · {ret.week === 0 ? "未恢复训练" : `第 ${ret.week} 周`}
+              </span>
+            )}
+            {status.weekly.monotonyWarning && (
+              <span className="rounded border border-zone-amber/40 bg-zone-amber/10 px-1.5 py-0.5 font-mono text-[10px] text-zone-amber">
+                ⚠ 单调性 {status.weekly.monotony}
+              </span>
+            )}
+          </div>
         }
       >
         Training Status · 训练状态
@@ -117,13 +132,36 @@ export default function TrainingStatusCard({ status }: { status: TrainingStatus 
 
           {status.allSessionsEstimated ? (
             <p className="mt-2 text-[10px] text-zone-amber/80">
-              无 RPE 模式：负荷按组数和时长估算，仅用于看趋势；估算出的“欠训练”不会触发加量建议。
+              无 RPE 模式：负荷按组数和时长估算，仅用于看趋势；估算出的“负荷偏低”不会触发加量建议。
             </p>
           ) : status.estimatedSessions > 0 ? (
             <p className="mt-2 text-[10px] text-zone-amber/80">
               {status.estimatedSessions}/{status.totalSessions} 次训练的负荷由组数和时长估算，趋势请结合手环心率负荷对照。
             </p>
           ) : null}
+
+          {ret && (
+            <div className="mt-2">
+              <p className="text-[10px] text-accent/90">{ret.note}</p>
+              {ret.weekCap !== null && ret.week > 0 && (
+                <div className="mt-1 h-1.5 overflow-hidden rounded bg-white/8">
+                  <div
+                    className={`h-full ${ret.weekLoad > ret.weekCap ? "bg-zone-amber" : "bg-accent"}`}
+                    style={{ width: `${Math.min((ret.weekLoad / ret.weekCap) * 100, 100)}%` }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+          {status.extraActivities.length > 0 && (
+            <p className="mt-2 text-[10px] text-zinc-500">
+              含手环运动：
+              {status.extraActivities.map((a) => `${a.date.slice(5)} ${a.label} ${a.minutes} 分钟（+${Math.round(a.load)} AU）`).join("；")}
+            </p>
+          )}
+          {status.durationCorrected > 0 && (
+            <p className="mt-1 text-[10px] text-zinc-500">{status.durationCorrected} 次训练时长按手环运动记录修正</p>
+          )}
 
           {status.hr && <HrLoadLine hr={status.hr} />}
         </div>
@@ -133,7 +171,7 @@ export default function TrainingStatusCard({ status }: { status: TrainingStatus 
 }
 
 // 心率负荷对照(手环运动记录的并行 ACWR):与 RPE 负荷互查。
-// 两者背离(如 RPE 侧"欠训练"而心率侧不低)多半是 RPE 漏填被低估;daysWithHr 少说明训练时没开运动模式。
+// 两者背离(如 RPE 侧"负荷偏低"而心率侧不低)多半是 RPE 漏填被低估;daysWithHr 少说明训练时没开运动模式。
 // 点击展开近 7 天逐日明细。
 function HrLoadLine({ hr }: { hr: HrLoadStatus }) {
   const [open, setOpen] = useState(false);
