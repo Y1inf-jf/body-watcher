@@ -156,7 +156,7 @@ export default function RecoveryScoreCard({
               debt == null
                 ? "负债未知"
                 : debt > 0
-                  ? `负债 ${fmtDuration(debt)} · ${refIsTarget ? "目标底线" : "近两晚最差"}`
+                  ? `负债 ${fmtDuration(debt)} · ${refIsTarget ? "目标底线" : "近两晚加权"}`
                   : debt < 0
                     ? `盈余 ${fmtDuration(-debt)}`
                     : "无负债"

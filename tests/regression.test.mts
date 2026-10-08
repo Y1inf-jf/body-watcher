@@ -62,9 +62,30 @@ describe("睡眠债口径", () => {
       sleepRow("2026-09-06", 480), sleepRow("2026-09-07", 360, 0), sleepRow("2026-09-08", 480, 0),
     ]);
 
-  test("前晚差 → 债>90", () => {
+  // 加权口径:昨晚 480 达标、前晚 360 → 按 ⅓ 计入;近 7 晚均值 ≈463 → 债 ≈23(旧口径取最差一晚 >90)
+  test("前晚差 → 按 ⅓ 计入(债 15–30)", () => {
     const debt = worstPrevNight().sleep.debtMinutes;
-    assert.ok(debt !== null && debt > 90, `debt=${debt}`);
+    assert.ok(debt !== null && debt >= 15 && debt <= 30, `debt=${debt}`);
+  });
+
+  test("连续两晚都差 → 债按两晚计(≈100)", () => {
+    const rows = [
+      ...Array.from({ length: 7 }, (_, i) => sleepRow(`2026-09-0${i + 1}`, 480)),
+      sleepRow("2026-09-08", 380), sleepRow("2026-09-09", 380),
+    ];
+    const debt = computeRecoveryFeatures(rows).sleep.debtMinutes;
+    // 近 7 晚(09-02..09-08)均值 = (6×480+380)/7 ≈ 466 → 466 − 380 = 86
+    assert.ok(debt !== null && debt >= 80 && debt <= 90, `debt=${debt}`);
+  });
+
+  test("两晚都不低于均值 → 不记债(旧口径取较差一晚会偏大)", () => {
+    const rows = [
+      ...Array.from({ length: 6 }, (_, i) => sleepRow(`2026-09-0${i + 1}`, i % 2 ? 460 : 500)),
+      sleepRow("2026-09-07", 460), sleepRow("2026-09-08", 500),
+    ];
+    // 近 7 晚(09-01..09-07)均值 = (3×500+4×460)/7 ≈ 477;加权 = (2×500+460)/3 ≈ 487 → 债 ≈ −10
+    const debt = computeRecoveryFeatures(rows).sleep.debtMinutes;
+    assert.ok(debt !== null && debt <= 0, `debt=${debt}`);
   });
 
   test("正常睡眠债≈0", () => {

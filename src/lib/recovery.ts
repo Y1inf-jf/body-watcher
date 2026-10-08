@@ -61,7 +61,7 @@ export interface SleepSummary {
   };
   avgInBed7d: number | null;
   avgAsleep7d: number | null; // 近 7 晚(不含昨晚)实际睡眠均值,睡眠债基线
-  debtMinutes: number | null; // 正值 = 欠觉;按近两晚最差 vs 参照线计算(见 computeRecoveryFeatures)
+  debtMinutes: number | null; // 正值 = 欠觉;按近两晚加权(⅔ 昨晚 + ⅓ 前晚) vs 参照线计算
   debtRefMinutes: number | null; // 债务参照线 = max(近7晚均值, 用户最低目标),null=完全无法参照
   deepSharePct: number | null;
 }
@@ -270,14 +270,15 @@ export function computeRecoveryFeatures(
   const avgAsleep7d = mean(recentAsleep);
   const lastNightInBed = today ? inBedOf(today) : null;
   const lastNightAsleep = today ? asleepOf(today) : null;
-  // 取近两晚较差一晚计债:连着两晚差睡眠不该被"昨晚碰巧还行"或均值本身被拉低所掩盖。
+  // 近两晚加权(昨晚 ⅔、前晚 ⅓)计债:连着两晚差睡眠仍会反映出来;
+  // 旧口径"取较差一晚"天然低于均值,正常睡眠也总记 10–20 分钟债,把分数系统性往下压。
   const prevNightAsleep = rowsAsc.length >= 2 ? asleepOf(rowsAsc[rowsAsc.length - 2]) : null;
-  const worstNightAsleep =
+  const blendedAsleep =
     lastNightAsleep === null
       ? prevNightAsleep
       : prevNightAsleep === null
         ? lastNightAsleep
-        : Math.min(lastNightAsleep, prevNightAsleep);
+        : (2 * lastNightAsleep + prevNightAsleep) / 3;
   const deep = today?.sleep_deep_minutes != null ? Number(today.sleep_deep_minutes) : null;
 
   // 债务参照线 = max(近7晚实际睡眠均值, 用户最低目标)。设了 min 目标后:
@@ -304,8 +305,8 @@ export function computeRecoveryFeatures(
     avgInBed7d: round1(avgInBed7d),
     avgAsleep7d: round1(avgAsleep7d),
     debtMinutes:
-      debtRef !== null && worstNightAsleep !== null
-        ? Math.round(debtRef - worstNightAsleep)
+      debtRef !== null && blendedAsleep !== null
+        ? Math.round(debtRef - blendedAsleep)
         : null,
     debtRefMinutes: debtRef,
     deepSharePct:
