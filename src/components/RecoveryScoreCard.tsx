@@ -173,7 +173,10 @@ export default function RecoveryScoreCard({
                 : "设目标或需 ≥7 天睡眠数据"
             }
           />
-          <p className="mt-2 text-[10px] text-zinc-600">
+          {score.drag && (
+            <p className="mt-2 text-[11px] text-zone-amber/90">主要拖累：{score.drag.text}</p>
+          )}
+          <p className="mt-1 text-[10px] text-zinc-600">
             50 = 你的正常水平 · {formula}
           </p>
           {compositeExpr && (

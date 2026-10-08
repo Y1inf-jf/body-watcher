@@ -111,6 +111,12 @@ export interface RecoveryScoreComponent {
   weightUsed: number | null; // 归一化后实际权重（该项缺信号时为 null）
 }
 
+// 主要拖累项:告诉用户分数是被哪一项拉低的(如"静息心率比基线高 3 bpm")。
+export interface RecoveryDrag {
+  key: "hrv" | "restingHr" | "sleep";
+  text: string;
+}
+
 export interface RecoveryScore {
   score: number | null; // 0-100，50 = 自己的正常水平
   zone: RecoveryZone | null;
@@ -122,6 +128,7 @@ export interface RecoveryScore {
   };
   flags: string[]; // SpO2 过低 / 呼吸率异常等旗标
   note: string | null; // 不出分时的原因
+  drag: RecoveryDrag | null; // 加权贡献最负且 z ≤ −0.5 的一项
 }
 
 function mean(values: number[]): number | null {
@@ -397,6 +404,21 @@ function clampZ(v: number): number {
   return Math.max(-Z_CLAMP, Math.min(Z_CLAMP, v));
 }
 
+const DRAG_MIN_Z = -0.5; // 偏离不到半个 σ 属日常波动,不点名
+
+function dragText(key: RecoveryDrag["key"], f: RecoveryFeatures): string {
+  if (key === "hrv") {
+    const pct = f.hrv.deviationPct;
+    return pct !== null ? `HRV 低于基线 ${Math.abs(Math.round(pct))}%` : "HRV 低于基线";
+  }
+  if (key === "restingHr") {
+    const d = f.restingHr.deviationBpm;
+    return d !== null ? `静息心率比基线高 ${Math.round(d)} bpm` : "静息心率高于基线";
+  }
+  const debt = f.sleep.debtMinutes;
+  return debt !== null ? `睡眠比参照线少 ${debt} 分钟` : "睡眠不足";
+}
+
 // Zelen & Severo 的 erf 近似（误差 < 1.5e-7），避免为此引依赖。
 export function normalCdf(z: number): number {
   const x = z / Math.SQRT2;
@@ -441,6 +463,7 @@ export function computeRecoveryScore(f: RecoveryFeatures): RecoveryScore {
     },
     flags,
     note: null,
+    drag: null,
   };
 
   // HRV 基线是核心信号，样本不足时整体不出分，维持"基线累计中"展示。
@@ -474,6 +497,13 @@ export function computeRecoveryScore(f: RecoveryFeatures): RecoveryScore {
   for (const c of available) {
     base.components[c.key].weightUsed = Math.round((c.weight / weightSum) * 100) / 100;
   }
+
+  let worst: { key: RecoveryDrag["key"]; contrib: number } | null = null;
+  for (const c of available) {
+    const contrib = (c.z * c.weight) / weightSum;
+    if (c.z <= DRAG_MIN_Z && (worst === null || contrib < worst.contrib)) worst = { key: c.key, contrib };
+  }
+  base.drag = worst ? { key: worst.key, text: dragText(worst.key, f) } : null;
 
   let score = Math.round(normalCdf(compositeZ) * 100);
   if (flags.length > 0) score = Math.min(score, FLAG_SCORE_CAP);

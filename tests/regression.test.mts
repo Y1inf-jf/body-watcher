@@ -12,7 +12,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { computeRecoveryFeatures, computeRecoveryScore, localDaysAgo } from "../src/lib/recovery";
 import { computeTrainingStatus, computeSleepNeed } from "../src/lib/training-status";
-import { computeReadiness } from "../src/lib/readiness";
+import { computeReadiness, bandFromScore } from "../src/lib/readiness";
 import { mergeManualHealth, latestManualSleepQuality } from "../src/lib/health-merge";
 import { resolveLlmFrom } from "../src/lib/llm";
 import { ACWR_ZONE_META, READY_ZONE_META } from "../src/lib/zone-meta";
@@ -335,6 +335,7 @@ function mkScore(score: number | null) {
     },
     flags: [],
     note: null,
+    drag: null,
   } as unknown as ReturnType<typeof computeRecoveryScore>;
 }
 
@@ -542,5 +543,48 @@ describe("鲁棒基线", () => {
 
   test("HRV 基线回显单位仍是 ms", () => {
     assert.equal(computeRecoveryFeatures(flat(10, 50, 70, 50, 70)).hrv.baselineMean, 50);
+  });
+});
+
+describe("主要拖累项与新门槛", () => {
+  const rows = (todayHrv: number | null, todayRhr: number): GoogleMetricRow[] => [
+    ...Array.from({ length: 10 }, (_, i) => ({
+      date: dayAfter("2026-08-01", i), hrv_avg_ms: 50, resting_hr: 70, sleep_in_bed_minutes: 480, sleep_awake_minutes: 0,
+    })),
+    { date: dayAfter("2026-08-01", 10), hrv_avg_ms: todayHrv, resting_hr: todayRhr, sleep_in_bed_minutes: 480, sleep_awake_minutes: 0 },
+  ];
+
+  test("静息心率高 6 bpm → 拖累项为静息心率", () => {
+    const score = computeRecoveryScore(computeRecoveryFeatures(rows(50, 76)));
+    assert.equal(score.drag?.key, "restingHr");
+    assert.equal(score.drag?.text, "静息心率比基线高 6 bpm");
+  });
+
+  test("HRV 低 → 拖累项文案给百分比", () => {
+    const score = computeRecoveryScore(computeRecoveryFeatures(rows(40, 70)));
+    assert.equal(score.drag?.key, "hrv");
+    assert.equal(score.drag?.text, "HRV 低于基线 20%");
+  });
+
+  test("各项都在基线 → 无拖累项", () => {
+    assert.equal(computeRecoveryScore(computeRecoveryFeatures(rows(50, 70))).drag, null);
+  });
+
+  test("今天没戴手环缺 HRV → 仍出分,拖累项不选 HRV", () => {
+    const score = computeRecoveryScore(computeRecoveryFeatures(rows(null, 76)));
+    assert.ok(score.score !== null);
+    assert.equal(score.drag?.key, "restingHr");
+  });
+
+  test("门槛:33 bad / 34 ok / 50 有旗标 low / 66 ok / 67 good", () => {
+    assert.equal(bandFromScore(33, false), "bad");
+    assert.equal(bandFromScore(34, false), "ok");
+    assert.equal(bandFromScore(50, true), "low");
+    assert.equal(bandFromScore(66, false), "ok");
+    assert.equal(bandFromScore(67, false), "good");
+  });
+
+  test("恢复分 45 无旗标 × 负荷最优 → 正常练(不再降档)", () => {
+    assert.equal(computeReadiness(mkStatus("optimal", 0), mkScore(45)).level, "normal");
   });
 });

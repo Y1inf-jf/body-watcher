@@ -17,7 +17,7 @@ export interface Readiness {
 
 // 恢复侧分档:恢复分为骨架;基线未就绪时降级用分项信号 + 手动录入的睡眠自评,
 // 只认负向证据(信号差才降档),避免冷启动期把一切误判成"差"。
-type RecoveryBand = "good" | "ok" | "low" | "bad";
+export type RecoveryBand = "good" | "ok" | "low" | "bad";
 
 interface RecoveryBandResult {
   band: RecoveryBand;
@@ -25,17 +25,23 @@ interface RecoveryBandResult {
   usedFallback: boolean;
 }
 
-function bandFromScore(score: number): { band: RecoveryBand } {
-  if (score < 34) return { band: "bad" };
-  if (score < 50) return { band: "low" };
-  if (score < 67) return { band: "ok" };
-  return { band: "good" };
+// 与恢复分颜色分区对齐:黄区(34–66)卡片文案就是"可正常训练",建议不能跟它唱反调。
+// 50 是个人常态,旧门槛 50 会让一半正常日子被判"降档"。黄区只在有异常旗标时降为 low。
+export function bandFromScore(score: number, hasFlags: boolean): RecoveryBand {
+  if (score < 34) return "bad";
+  if (score >= 67) return "good"; // 有旗标时分数封顶 66,到不了这里
+  return hasFlags ? "low" : "ok";
 }
 
 export function classifyRecoveryBand(recovery: RecoveryScore, manualSleepQuality: number | null): RecoveryBandResult {
   if (recovery.score !== null && recovery.zone !== null) {
-    const { band } = bandFromScore(recovery.score);
-    const note = band === "bad" || band === "low" ? `恢复分 ${recovery.score} 偏低` : `恢复分 ${recovery.score} 状态不差`;
+    const band = bandFromScore(recovery.score, recovery.flags.length > 0);
+    const note =
+      band === "bad"
+        ? `恢复分 ${recovery.score} 偏低`
+        : band === "low"
+          ? `恢复分 ${recovery.score}，但有异常信号：${recovery.flags.join("、")}`
+          : `恢复分 ${recovery.score} 状态不差`;
     return { band, note, usedFallback: false };
   }
 
