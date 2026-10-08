@@ -27,6 +27,7 @@ import { parseExerciseSession, sessionsFromRawPayloads, type ExerciseSession } f
 import { correctDurations, extraActivities, type ExtraActivity } from "../src/lib/session-merge";
 import { computeLoadContext, illnessSignalDays, shiftDate } from "../src/lib/load-context";
 import type { DailyLoadPoint } from "../src/lib/training-status";
+import type { LoadContext } from "../src/lib/load-context";
 
 function sleepRow(
   date: string,
@@ -829,5 +830,43 @@ describe("回归期", () => {
 
   test("新用户(停训前没有任何负荷)→ 不进回归期", () => {
     assert.equal(computeLoadContext(mkSeries("2026-09-20", 63, {}), [], "2026-09-20").phase, "normal");
+  });
+});
+
+describe("今日建议结合回归期", () => {
+  const returnCtx = (remaining: number): LoadContext => ({
+    phase: "return", reason: "illness", resumeDate: "2026-09-19", week: 1, weekLoad: 121, weekCap: 121 + remaining, remaining,
+    note: remaining <= 0 ? "回归期第 1 周（病后）：本周 121 / 上限 75 AU，本周回归额度已用完，今天维持量，别再加" : "回归期第 1 周（病后）：本周 40 / 上限 75 AU，循序加量",
+  });
+
+  test("回归期 + 恢复正常 + 额度用完 → 仍正常练,负荷说明含额度提示", () => {
+    const r = computeReadiness(mkStatus("under", 0), mkScore(45), { loadContext: returnCtx(-46) });
+    assert.equal(r.level, "normal");
+    assert.match(r.loadPart ?? "", /额度已用完/);
+  });
+
+  test("回归期 + 恢复好 → 不出可以冲", () => {
+    assert.equal(computeReadiness(mkStatus("under", 0), mkScore(85), { loadContext: returnCtx(30) }).level, "normal");
+  });
+
+  test("回归期 + 恢复差 → 休息", () => {
+    assert.equal(computeReadiness(mkStatus("under", 0), mkScore(20), { loadContext: returnCtx(30) }).level, "rest");
+  });
+
+  test("非回归期负荷偏低 + 恢复一般 → 不提加量", () => {
+    const r = computeReadiness(mkStatus("under", 0), mkScore(55));
+    assert.equal(r.level, "normal");
+    assert.doesNotMatch(`${r.detail}${r.loadPart}`, /加量空间|补量/);
+    assert.match(r.loadPart ?? "", /负荷偏少，按计划练/);
+  });
+
+  test("非回归期负荷偏低 + 恢复好 → 仍可冲(不传 loadContext 的老调用)", () => {
+    assert.equal(computeReadiness(mkStatus("under", 0), mkScore(80)).level, "go_hard");
+  });
+
+  test("文案不再出现欠训练", () => {
+    const r = computeReadiness(mkStatus("under", 0), mkScore(55));
+    assert.doesNotMatch(`${r.loadPart}`, /欠训练/);
+    assert.equal(ACWR_ZONE_META.under.label, "负荷偏低");
   });
 });

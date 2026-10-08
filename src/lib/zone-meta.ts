@@ -43,8 +43,8 @@ export const RECOVERY_ZONE_META: Record<RecoveryZone, ZoneMeta> = {
 
 export const ACWR_ZONE_META: Record<AcwrZone, ZoneMeta> = {
   under: {
-    label: "欠训练",
-    desc: "慢性负荷高于近期,有加量空间",
+    label: "负荷偏低",
+    desc: "近期负荷低于慢性水平",
     text: "text-accent",
     border: "border-accent/40",
     bg: "bg-accent/10",

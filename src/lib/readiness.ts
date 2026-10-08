@@ -4,6 +4,7 @@
 // 负荷决定今天该练还是该歇。分区与文档见 docs/training-algorithms.md 第 5 节。
 import type { RecoveryScore } from "./recovery";
 import type { FormZone, TrainingStatus } from "./training-status";
+import type { LoadContext } from "./load-context";
 
 export type ReadinessLevel = "go_hard" | "normal" | "downgrade" | "rest" | "unknown";
 
@@ -61,7 +62,8 @@ export function classifyRecoveryBand(recovery: RecoveryScore, manualSleepQuality
 }
 
 // 负荷侧分档:ACWR 为主轴,form 与单调性封顶降级。
-type LoadBand = "build" | "maintain" | "hold" | "deload";
+// ramp = 回归期(停训/生病后):按逐周上限循序加量,永不"可以冲"。
+type LoadBand = "build" | "maintain" | "hold" | "deload" | "ramp";
 
 interface LoadBandResult {
   band: LoadBand;
@@ -70,18 +72,33 @@ interface LoadBandResult {
 
 const FORM_LABEL: Record<FormZone, string> = { fresh: "新鲜", neutral: "平衡", fatigued: "疲劳积累" };
 
-export function classifyLoadBand(status: TrainingStatus): LoadBandResult {
+export function classifyLoadBand(
+  status: TrainingStatus,
+  opts: { loadContext?: LoadContext | null; recoveryBand?: RecoveryBand } = {}
+): LoadBandResult {
+  // 回归期优先:此时 ACWR 偏低是应该的,解读交给回归期上限。超上限只提示(note 里已带),不降档。
+  if (opts.loadContext?.phase === "return") {
+    return { band: "ramp", note: opts.loadContext.note };
+  }
+
   const { acwr, form, weekly } = status;
   const parts: string[] = [];
   let band: LoadBand = "maintain";
+  let underNote: string | null = null;
 
   if (acwr.zone === null) {
     parts.push("负荷数据累计中");
   } else {
-    parts.push(`ACWR ${acwr.value?.toFixed(2)} ${acwr.zone === "under" ? "欠训练" : acwr.zone === "optimal" ? "最优" : acwr.zone === "high" ? "偏高" : "急性峰值"}`);
+    parts.push(`ACWR ${acwr.value?.toFixed(2)} ${acwr.zone === "under" ? "负荷偏低" : acwr.zone === "optimal" ? "最优" : acwr.zone === "high" ? "偏高" : "急性峰值"}`);
     if (acwr.zone === "risk") band = "deload";
     else if (acwr.zone === "high") band = "hold";
-    else if (acwr.zone === "under") band = "build";
+    else if (acwr.zone === "under") {
+      // 负荷偏低只在恢复好时才等于"可加量";恢复一般/偏低时低负荷本身是合理的。
+      // 老调用方不传 recoveryBand 时保持原行为。
+      const rb = opts.recoveryBand;
+      if (rb === undefined || rb === "good") band = "build";
+      else underNote = rb === "ok" ? "负荷偏少，按计划练" : "低负荷合理，先恢复";
+    }
   }
   if (form.zone === "fatigued") {
     parts.push(`form ${form.value}（疲劳积累）`);
@@ -94,7 +111,7 @@ export function classifyLoadBand(status: TrainingStatus): LoadBandResult {
     if (band === "build") band = "maintain";
   }
   // 训记没有 RPE 时,组数和时长只能反映剂量,不能可靠判断接近力竭程度。
-  // 保留高负荷预警的保守价值,但不让估算出的"欠训练"驱动加量/冲强度。
+  // 保留高负荷预警的保守价值,但不让估算出的"负荷偏低"驱动加量/冲强度。
   if (status.allSessionsEstimated && band === "build") {
     parts.push("负荷由组数和时长估算，不据此加量");
     band = "maintain";
@@ -102,9 +119,10 @@ export function classifyLoadBand(status: TrainingStatus): LoadBandResult {
 
   const noteMap: Record<LoadBand, string> = {
     build: "相对平时偏少，有加量空间",
-    maintain: "负荷节奏健康",
+    maintain: underNote ?? "负荷节奏健康",
     hold: "不再加量",
     deload: "负荷突变，有受伤风险",
+    ramp: "",
   };
   return { band, note: `${parts.join("，")}——${noteMap[band]}` };
 }
@@ -121,31 +139,35 @@ const COMBOS: Record<RecoveryBand, Record<LoadBand, Combo>> = {
     maintain: { level: "normal", headline: "正常练", detail: "恢复良好、负荷健康，按计划执行，状态好可小幅加量" },
     hold: { level: "normal", headline: "正常练", detail: "身体扛得住，但负荷已在高位：按计划训练，不再加重" },
     deload: { level: "downgrade", headline: "主动降档", detail: "恢复虽好，但负荷出现急性峰值——今天只做轻松训练，别跟着感觉冲" },
+    ramp: { level: "normal", headline: "正常练", detail: "回归期：按本周上限循序加量，不冲极限" },
   },
   ok: {
     build: { level: "normal", headline: "正常练", detail: "恢复不差、近期偏少，按计划训练即可" },
     maintain: { level: "normal", headline: "正常练", detail: "恢复与负荷都在正常带，按计划执行" },
     hold: { level: "downgrade", headline: "主动降档", detail: "负荷偏高，今天练可以，但砍掉最后一两组冲法、别测极限" },
     deload: { level: "rest", headline: "今天休息", detail: "负荷突变叠加恢复一般，继续练只会放大风险" },
+    ramp: { level: "normal", headline: "正常练", detail: "回归期：按本周上限循序加量，不冲极限" },
   },
   low: {
     build: { level: "downgrade", headline: "主动降档", detail: "负荷虽有余量，但恢复偏低：今天轻量训练，别急着补量" },
     maintain: { level: "downgrade", headline: "主动降档", detail: "计划没超量，是身体没缓过来：组数减 1/3、重量下 10-20%，睡够优先" },
     hold: { level: "downgrade", headline: "主动降档", detail: "负荷偏高 + 恢复偏低，双重信号：今天只做轻量，观察一晚" },
     deload: { level: "rest", headline: "今天休息", detail: "负荷突变叠加恢复不足，果断休息，安排散步或拉伸" },
+    ramp: { level: "downgrade", headline: "主动降档", detail: "回归期叠加恢复偏低：轻量为主，别急着找回原来的量" },
   },
   bad: {
     build: { level: "downgrade", headline: "主动降档", detail: "恢复较差时不加量：今天很轻的活动即可，先补觉" },
     maintain: { level: "downgrade", headline: "主动降档", detail: "负荷节奏没毛病，但身体信号差：今天降档训练或直接休息" },
     hold: { level: "rest", headline: "今天休息", detail: "恢复差 + 负荷偏高，今天不练，睡眠优先" },
     deload: { level: "rest", headline: "今天休息", detail: "多重负面信号叠加，彻底休息，若持续两天以上建议排查生病前兆" },
+    ramp: { level: "rest", headline: "今天休息", detail: "回归期恢复差：先休息观察，持续两天以上留意是否复发" },
   },
 };
 
 export function computeReadiness(
   status: TrainingStatus,
   recovery: RecoveryScore,
-  opts: { manualSleepQuality?: number | null } = {}
+  opts: { manualSleepQuality?: number | null; loadContext?: LoadContext | null } = {}
 ): Readiness {
   const manualQ = opts.manualSleepQuality ?? null;
   // 两侧都完全没信息(新用户零训练零数据)时不给假结论。
@@ -167,7 +189,7 @@ export function computeReadiness(
     };
   }
   const rec = classifyRecoveryBand(recovery, manualQ);
-  const load = classifyLoadBand(status);
+  const load = classifyLoadBand(status, { loadContext: opts.loadContext ?? null, recoveryBand: rec.band });
   const combo = COMBOS[rec.band][load.band];
   return {
     level: combo.level,
