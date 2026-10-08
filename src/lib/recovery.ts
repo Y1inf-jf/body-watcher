@@ -129,10 +129,17 @@ function mean(values: number[]): number | null {
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
 
-function sd(values: number[]): number | null {
+export function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const s = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+// MAD×1.4826:正态下与标准差同尺度,但少数极端日(如病中几天)拉不宽它。
+function robustSpread(values: number[], center: number): number | null {
   if (values.length < 2) return null;
-  const m = mean(values)!;
-  return Math.sqrt(values.reduce((acc, v) => acc + (v - m) ** 2, 0) / (values.length - 1));
+  return 1.4826 * (median(values.map((v) => Math.abs(v - center))) as number);
 }
 
 function round1(n: number | null): number | null {
@@ -151,27 +158,40 @@ export function localDaysAgo(days: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// 基线:中位数为中心、MAD 为离散,并设离散下限——样本少或设备给整数(RHR)时,
+// 原始标准差可能不到 1 bpm,差 2 bpm 就被当成 −3σ 的"极端异常"。
+// log=true 时在 ln 空间计算(HRV 近似对数正态,Plews 等的标准做法),回显仍换回原单位。
 function computeBaseline(
   pool: number[],
   todayValue: number | null,
-  minSamples = 5
-): Omit<BaselineFeature, never> {
-  const m = mean(pool);
-  const s = sd(pool);
-  const ready = pool.length >= minSamples && m !== null && s !== null && s > 0.001;
-  const zScore = ready && todayValue !== null ? (todayValue - m) / (s as number) : null;
+  opts: { minSpread: number; log?: boolean; minSamples?: number }
+): BaselineFeature {
+  const minSamples = opts.minSamples ?? 5;
+  const valid = opts.log ? pool.filter((v) => v > 0) : pool;
+  const t = opts.log ? valid.map(Math.log) : valid;
+  const center = median(t);
+  const rawSpread = center === null ? null : robustSpread(t, center);
+  const spread = rawSpread === null ? null : Math.max(rawSpread, opts.minSpread);
+  const ready = t.length >= minSamples && center !== null && spread !== null;
+  const todayT =
+    todayValue === null || (opts.log && todayValue <= 0) ? null : opts.log ? Math.log(todayValue) : todayValue;
+  const zScore = ready && todayT !== null ? (todayT - (center as number)) / (spread as number) : null;
+  const centerOut = center === null ? null : opts.log ? Math.exp(center) : center;
   const deviationPct =
-    ready && todayValue !== null && m !== 0 ? ((todayValue - m) / m) * 100 : null;
+    ready && todayValue !== null && centerOut ? ((todayValue - centerOut) / centerOut) * 100 : null;
   return {
     value: todayValue,
-    baselineMean: round1(m),
-    baselineSd: round1(s),
+    baselineMean: round1(centerOut),
+    baselineSd: spread === null ? null : opts.log ? Math.round(spread * 1000) / 1000 : round1(spread),
     zScore: zScore === null ? null : Math.round(zScore * 100) / 100,
     deviationPct: deviationPct === null ? null : Math.round(deviationPct * 10) / 10,
-    baselineDays: pool.length,
+    baselineDays: t.length,
     ready,
   };
 }
+
+const BASELINE_POOL = 30; // 基线池:除今天外最近 30 个样本
+const SPREAD_FLOOR = { restingHr: 2.0, lnHrv: 0.08, respiratoryRate: 0.5 } as const;
 
 export function computeRecoveryFeatures(
   rowsAsc: GoogleMetricRow[],
@@ -183,8 +203,8 @@ export function computeRecoveryFeatures(
     idealMinutes: opts.sleepTargets?.idealMinutes ?? null,
   };
   const today = rowsAsc.length > 0 ? rowsAsc[rowsAsc.length - 1] : null;
-  // 基线池：除今天外、最近的 21 天样本。
-  const pool = rowsAsc.slice(0, -1).slice(-21);
+  // 基线池:除今天外、最近 30 天样本。
+  const pool = rowsAsc.slice(0, -1).slice(-BASELINE_POOL);
 
   // HRV 用整晚均值（与 Fitbit app 显示一致、样本足方差小），缺了退回深睡期 rMSSD。
   const hrvOf = (r: GoogleMetricRow): number | null =>
@@ -198,7 +218,7 @@ export function computeRecoveryFeatures(
 
   const hrvPool = pool.map(hrvOf).filter((v): v is number => v !== null);
   const hrv = {
-    ...computeBaseline(hrvPool, today ? hrvOf(today) : null),
+    ...computeBaseline(hrvPool, today ? hrvOf(today) : null, { minSpread: SPREAD_FLOOR.lnHrv, log: true }),
     source: hrvSource,
   };
 
@@ -206,7 +226,7 @@ export function computeRecoveryFeatures(
     .map((r) => (r.resting_hr == null ? null : Number(r.resting_hr)))
     .filter((v): v is number => v !== null);
   const rhrValue = today?.resting_hr != null ? Number(today.resting_hr) : null;
-  const rhrBase = computeBaseline(rhrPool, rhrValue);
+  const rhrBase = computeBaseline(rhrPool, rhrValue, { minSpread: SPREAD_FLOOR.restingHr });
   const restingHr = {
     ...rhrBase,
     deviationBpm:
@@ -220,7 +240,8 @@ export function computeRecoveryFeatures(
     .filter((v): v is number => v !== null);
   const respiratoryRate = computeBaseline(
     rrPool,
-    today?.respiratory_rate != null ? Number(today.respiratory_rate) : null
+    today?.respiratory_rate != null ? Number(today.respiratory_rate) : null,
+    { minSpread: SPREAD_FLOOR.respiratoryRate }
   );
   const spo2Avg = today?.spo2_avg != null ? Number(today.spo2_avg) : null;
 
@@ -363,7 +384,7 @@ export function summarizeTrainingLoad(logs: TrainingLogRow[]): TrainingLoadSumma
 }
 
 // ---------- 恢复分（0-100，50 = 自己的正常水平） ----------
-// 方法：HRV/静息心率对 21 天基线取 z-score，睡眠债用固定容忍度换算，
+// 方法：HRV/静息心率对 30 天鲁棒基线(中位数/MAD,HRV 取对数)取 z-score，睡眠债用固定容忍度换算，
 // 加权合成后经标准正态 CDF 映射到 0-100。颜色分档对齐 Whoop：<34 红 / 34-66 黄 / >=67 绿。
 
 const SCORE_WEIGHTS = { hrv: 0.4, restingHr: 0.3, sleep: 0.3 } as const;
@@ -402,7 +423,7 @@ export function computeRecoveryScore(f: RecoveryFeatures): RecoveryScore {
   }
 
   // 静息心率取负：越高恢复越差。
-  const zHrv = f.hrv.zScore;
+  const zHrv = f.hrv.zScore === null ? null : clampZ(f.hrv.zScore);
   const zRhr =
     f.restingHr.ready && f.restingHr.zScore != null ? clampZ(-f.restingHr.zScore) : null;
   const zSleep =

@@ -464,3 +464,62 @@ describe("登录失败限流(递进退避)", () => {
     resetLoginThrottle();
   });
 });
+
+// 从起始日往后推 n 天(测试用,本地日历口径)。
+function dayAfter(start: string, n: number): string {
+  const d = new Date(`${start}T00:00:00`);
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+describe("鲁棒基线", () => {
+  // 20 天正常(HRV 48/52 交替、RHR 70)中间夹 4 天病中(HRV 25、RHR 80),今天单独给
+  const withSickDays = (todayHrv: number, todayRhr: number): GoogleMetricRow[] => {
+    const rows: GoogleMetricRow[] = [];
+    for (let i = 0; i < 24; i++) {
+      const sick = i >= 10 && i < 14;
+      rows.push({ date: dayAfter("2026-08-01", i), hrv_avg_ms: sick ? 25 : i % 2 ? 48 : 52, resting_hr: sick ? 80 : 70 });
+    }
+    rows.push({ date: dayAfter("2026-08-01", 24), hrv_avg_ms: todayHrv, resting_hr: todayRhr });
+    return rows;
+  };
+  const flat = (n: number, hrv: number, rhr: number, todayHrv: number, todayRhr: number): GoogleMetricRow[] => [
+    ...Array.from({ length: n }, (_, i) => ({ date: dayAfter("2026-08-01", i), hrv_avg_ms: hrv, resting_hr: rhr })),
+    { date: dayAfter("2026-08-01", n), hrv_avg_ms: todayHrv, resting_hr: todayRhr },
+  ];
+
+  test("病中极端日不把 HRV 基线拉偏", () => {
+    const f = computeRecoveryFeatures(withSickDays(38, 70));
+    assert.ok(f.hrv.baselineMean !== null && f.hrv.baselineMean >= 47 && f.hrv.baselineMean <= 53, String(f.hrv.baselineMean));
+  });
+
+  test("病中极端日不把 HRV 离散拉宽:今天 38 仍明显偏低", () => {
+    const z = computeRecoveryFeatures(withSickDays(38, 70)).hrv.zScore;
+    assert.ok(z !== null && z < -1.5, `z=${z}`);
+  });
+
+  test("RHR 基线取中位数,病中 80 不影响", () => {
+    const f = computeRecoveryFeatures(withSickDays(50, 70));
+    assert.equal(f.restingHr.baselineMean, 70);
+    assert.equal(f.restingHr.zScore, 0);
+  });
+
+  test("RHR 离散下限 2 bpm:全 70 的池子,今天 72 → 分项 z = −1", () => {
+    const f = computeRecoveryFeatures(flat(10, 50, 70, 50, 72));
+    assert.equal(f.restingHr.zScore, 1);
+    assert.equal(computeRecoveryScore(f).components.restingHr.z, -1);
+  });
+
+  test("ln HRV 离散下限 0.08:全 50 的池子,今天 46 → z ≈ −1.04", () => {
+    assert.equal(computeRecoveryFeatures(flat(10, 50, 70, 46, 70)).hrv.zScore, -1.04);
+  });
+
+  test("HRV 分项 z 夹在 −3", () => {
+    const score = computeRecoveryScore(computeRecoveryFeatures(flat(10, 50, 70, 20, 70)));
+    assert.equal(score.components.hrv.z, -3);
+  });
+
+  test("HRV 基线回显单位仍是 ms", () => {
+    assert.equal(computeRecoveryFeatures(flat(10, 50, 70, 50, 70)).hrv.baselineMean, 50);
+  });
+});
