@@ -12,6 +12,7 @@ import Database from "better-sqlite3";
 import { deriveDailyContext } from "../src/lib/daily-context";
 import { sessionsFromRawPayloads } from "../src/lib/google/exercise-metrics";
 import { shiftDate } from "../src/lib/load-context";
+import { LOAD_SERIES_DAYS } from "../src/lib/training-status";
 import type { GoogleMetricRow, SleepTargets, TrainingLogRow } from "../src/lib/recovery";
 
 const [dbPath, from = "2026-09-04", to = "2026-09-24"] = process.argv.slice(2);
@@ -36,6 +37,9 @@ const allSessions = sessionsFromRawPayloads(
 );
 const snapshot = db.prepare("SELECT score FROM recovery_snapshots WHERE date = ?");
 
+// ACWR 列为"截至前一天"口径(今天的训练明天才计入)。
+const firstTrainingDate = (db.prepare("SELECT MIN(date) AS d FROM training_log").get() as { d: string | null }).d;
+const LOAD_DAYS = Math.max(63, LOAD_SERIES_DAYS);
 console.log("日期        旧分  新分  拖累项                      今日建议   ACWR  回归期");
 for (let day = from; day <= to; day = shiftDate(day, 1)) {
   const googleRows = db
@@ -46,13 +50,13 @@ for (let day = from; day <= to; day = shiftDate(day, 1)) {
     .all(shiftDate(day, -30), day) as Record<string, unknown>[];
   const logs = db
     .prepare("SELECT * FROM training_log WHERE date > ? AND date <= ? ORDER BY date DESC")
-    .all(shiftDate(day, -63), day) as TrainingLogRow[];
+    .all(shiftDate(day, -LOAD_DAYS), day) as TrainingLogRow[];
   for (const log of logs) {
     log.exercises = db.prepare("SELECT * FROM training_exercise WHERE training_log_id = ?").all(log.id) as TrainingLogRow["exercises"];
   }
-  const sessions = allSessions.filter((s) => s.date > shiftDate(day, -63) && s.date <= day);
+  const sessions = allSessions.filter((s) => s.date > shiftDate(day, -LOAD_DAYS) && s.date <= day);
 
-  const ctx = deriveDailyContext({ today: day, googleRows, healthMetrics, logs, sessions, sleepTargets });
+  const ctx = deriveDailyContext({ today: day, googleRows, healthMetrics, logs, sessions, sleepTargets, firstTrainingDate });
   const old = (snapshot.get(day) as { score: number | null } | undefined)?.score ?? null;
   const lc = ctx.loadContext;
   console.log(

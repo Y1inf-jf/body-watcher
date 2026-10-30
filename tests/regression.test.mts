@@ -11,7 +11,15 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { computeRecoveryFeatures, computeRecoveryScore, localDaysAgo } from "../src/lib/recovery";
-import { computeTrainingStatus, computeSleepNeed } from "../src/lib/training-status";
+import {
+  computeTrainingStatus,
+  computeSleepNeed,
+  ewma,
+  buildDailyLoadSeries,
+  computeAcwr,
+  computeHrLoadStatus,
+  LOAD_SERIES_DAYS,
+} from "../src/lib/training-status";
 import { computeReadiness, bandFromScore } from "../src/lib/readiness";
 import { mergeManualHealth, latestManualSleepQuality } from "../src/lib/health-merge";
 import { resolveLlmFrom } from "../src/lib/llm";
@@ -241,11 +249,14 @@ describe("真实数据回放(服务器 2026-08-28..09-07)", () => {
     ] as TrainingLogRow[];
 
   const deviceOnly = () =>
-    computeReadiness(computeTrainingStatus(logs()), computeRecoveryScore(computeRecoveryFeatures(google())));
+    computeReadiness(
+      computeTrainingStatus(logs(), { today: "2026-09-07" }),
+      computeRecoveryScore(computeRecoveryFeatures(google()))
+    );
 
   const withManual = () =>
     computeReadiness(
-      computeTrainingStatus(logs()),
+      computeTrainingStatus(logs(), { today: "2026-09-07" }),
       computeRecoveryScore(
         computeRecoveryFeatures(
           mergeManualHealth(google(), [
@@ -930,25 +941,27 @@ describe("今日建议结合回归期", () => {
   });
 });
 
-describe("每日上下文组装(端到端)", () => {
-  // 复用回归期夹具:病前每 3 天 50 AU(用 duration=50/rpe=6 → 50 AU),9/21 训记只记 12 分钟但手环 WORKOUT 32 分钟
-  const inputs = () => {
-    const logs: TrainingLogRow[] = [];
-    for (let i = 0; i < 10; i++) logs.push({ date: shiftDate("2026-08-15", i * 3), duration: 50, rpe: 6 });
-    logs.push({ date: "2026-09-21", duration: 12, exercises: [{ sets: 20 }] });
-    logs.reverse(); // 与 queryTrainingHistoryDetailed 一致:DESC
-    return {
-      today: "2026-09-21",
-      googleRows: sickRows(),
-      healthMetrics: [],
-      logs,
-      sessions: [
-        ...ballDay(),
-        mkSession({ date: "2026-09-21", exerciseType: "WORKOUT", recordingMethod: "ACTIVELY_MEASURED", startTime: "2026-09-21T04:13:00Z", endTime: "2026-09-21T04:45:00Z", activeMinutes: 31.8 }),
-      ],
-      sleepTargets: { minMinutes: null, targetMinutes: null, idealMinutes: null },
-    };
+// 复用回归期夹具:病前每 3 天 50 AU(用 duration=50/rpe=6 → 50 AU),9/21 训记只记 12 分钟但手环 WORKOUT 32 分钟
+function e2eInputs() {
+  const logs: TrainingLogRow[] = [];
+  for (let i = 0; i < 10; i++) logs.push({ date: shiftDate("2026-08-15", i * 3), duration: 50, rpe: 6 });
+  logs.push({ date: "2026-09-21", duration: 12, exercises: [{ sets: 20 }] });
+  logs.reverse(); // 与 queryTrainingHistoryDetailed 一致:DESC
+  return {
+    today: "2026-09-21",
+    googleRows: sickRows(),
+    healthMetrics: [],
+    logs,
+    sessions: [
+      ...ballDay(),
+      mkSession({ date: "2026-09-21", exerciseType: "WORKOUT", recordingMethod: "ACTIVELY_MEASURED", startTime: "2026-09-21T04:13:00Z", endTime: "2026-09-21T04:45:00Z", activeMinutes: 31.8 }),
+    ],
+    sleepTargets: { minMinutes: null, targetMinutes: null, idealMinutes: null },
   };
+}
+
+describe("每日上下文组装(端到端)", () => {
+  const inputs = e2eInputs;
 
   test("时长修正 + 打球计入 + 回归期全部接通", () => {
     const ctx = deriveDailyContext(inputs());
@@ -956,5 +969,133 @@ describe("每日上下文组装(端到端)", () => {
     assert.equal(ctx.trainingStatus.extraActivities.length, 1);
     assert.equal(ctx.loadContext.phase, "return");
     assert.match(ctx.readiness.loadPart ?? "", /回归期第 1 周/);
+  });
+});
+
+describe("EWMA 种子不敏感 + 截至昨天口径", () => {
+  const D = "2026-10-28"; // 训练日(periodic 里 i=0 要练)
+  const T = D;
+  // 从 today 往前 n 天,i%7∈{0,2,4} 的日子各练一次 60 AU(duration 60 × rpe 6 / 6)
+  const periodic = (today: string, n: number): TrainingLogRow[] => {
+    const out: TrainingLogRow[] = [];
+    for (let i = 0; i < n; i++) if ([0, 2, 4].includes(i % 7)) out.push({ date: shiftDate(today, -i), duration: 60, rpe: 6 });
+    return out;
+  };
+  const without = (logs: TrainingLogRow[], date: string) => logs.filter((l) => l.date !== date);
+
+  test("ewma 基本性质", () => {
+    assert.equal(ewma([], 0.25), 0);
+    assert.ok(Math.abs(ewma([42], 0.25) - 42) < 1e-9);
+    assert.ok(Math.abs(ewma(Array(60).fill(37), 2 / 29) - 37) < 1e-9);
+  });
+
+  test("窗口首日练不练不影响 ACWR/TSB(旧实现 TSB 差约 20)", () => {
+    const base = periodic(T, 120);
+    const extra = { date: shiftDate(T, -(LOAD_SERIES_DAYS - 1)), duration: 60, rpe: 10 } as TrainingLogRow;
+    const a = computeTrainingStatus(base, { today: shiftDate(T, 1) });
+    const b = computeTrainingStatus([...base, extra], { today: shiftDate(T, 1) });
+    assert.ok(Math.abs((a.acwr.value ?? 0) - (b.acwr.value ?? 0)) <= 0.01, `${a.acwr.value} vs ${b.acwr.value}`);
+    assert.ok(Math.abs((a.form.value ?? 0) - (b.form.value ?? 0)) <= 0.5, `${a.form.value} vs ${b.form.value}`);
+  });
+
+  test("窗口滑动一天指标平稳", () => {
+    const logs = periodic(T, 120).filter((l) => l.date < shiftDate(T, 1));
+    const a = computeTrainingStatus(logs, { today: shiftDate(T, 1) });
+    const b = computeTrainingStatus(logs, { today: shiftDate(T, 2) });
+    assert.ok(Math.abs((a.form.fitness ?? 0) - (b.form.fitness ?? 0)) <= 1);
+  });
+
+  test("今天练不练不影响决策指标", () => {
+    const withD = periodic(D, 120);
+    const noD = without(withD, D);
+    const a = computeTrainingStatus(withD, { today: D });
+    const b = computeTrainingStatus(noD, { today: D });
+    assert.deepEqual(a.acwr, b.acwr);
+    assert.deepEqual(a.form, b.form);
+    assert.deepEqual(a.weekly, b.weekly);
+    assert.equal(a.yesterdayLoad, b.yesterdayLoad);
+    assert.equal(a.todayLoad, 60);
+    assert.equal(b.todayLoad, 0);
+    assert.equal(a.series.at(-1)?.load, 60);
+    assert.equal(a.asOf, shiftDate(D, -1));
+  });
+
+  test("今早 ACWR = 昨晚练完后的完整状态;把今天 0 算进去会系统性偏低", () => {
+    const logs = periodic(D, 120);
+    const morning = computeTrainingStatus(logs, { today: shiftDate(D, 1) });
+    // 输入完全一致:以 D 结尾的 LOAD_SERIES_DAYS-1 天(morning 的 settled)
+    const ref = computeAcwr(buildDailyLoadSeries(logs, LOAD_SERIES_DAYS - 1, D));
+    assert.equal(morning.acwr.value, ref.value);
+    const naive = computeAcwr(buildDailyLoadSeries(logs, LOAD_SERIES_DAYS, shiftDate(D, 1)));
+    assert.ok((naive.value ?? 0) < (morning.acwr.value ?? 0) - 0.1, `${naive.value} vs ${morning.acwr.value}`);
+  });
+
+  test("冷启动裁剪:首个记录日之前不算休息日", () => {
+    const logs: TrainingLogRow[] = [];
+    for (let i = 1; i <= 22; i++) logs.push({ date: shiftDate(T, -i), duration: 50, rpe: 6 });
+    const cut = computeTrainingStatus(logs, { today: T, historyStart: shiftDate(T, -22) });
+    assert.equal(cut.acwr.value, 1);
+    assert.equal(cut.form.value, 0);
+    const uncut = computeTrainingStatus(logs, { today: T });
+    assert.ok((uncut.acwr.value ?? 0) > 1.2, String(uncut.acwr.value));
+  });
+
+  test("冷启动累计中:当前天数为真实记录天数", () => {
+    const logs: TrainingLogRow[] = [];
+    for (let i = 1; i <= 10; i++) logs.push({ date: shiftDate(T, -i), duration: 50, rpe: 6 });
+    const s = computeTrainingStatus(logs, { today: T, historyStart: shiftDate(T, -10) });
+    assert.equal(s.acwr.value, null);
+    assert.match(s.acwr.note ?? "", /当前 10 天/);
+    assert.equal(s.form.value, null);
+    assert.ok(s.weekly.load7d > 0);
+  });
+
+  test("心率侧同口径:今天的运动不影响 ACWR 与周负荷,只进 daysWithHr", () => {
+    const map = new Map<string, number>();
+    for (let i = 1; i <= 40; i += 2) map.set(shiftDate(T, -i), 50);
+    const withToday = new Map(map).set(T, 80);
+    const opts = { historyStart: shiftDate(T, -40) };
+    const a = computeHrLoadStatus(map, T, opts);
+    const b = computeHrLoadStatus(withToday, T, opts);
+    assert.deepEqual(a.acwr, b.acwr);
+    assert.equal(a.load7d, b.load7d);
+    assert.equal(b.daysWithHr, a.daysWithHr + 1);
+  });
+
+  test("回归期:当天练完不当场退出", () => {
+    const ctx = computeLoadContext(mkSeries("2026-09-23", 63, afterReturn()), sickRows(), "2026-09-23");
+    assert.equal(ctx.phase, "return");
+    if (ctx.phase !== "return") return;
+    assert.equal(ctx.weekLoad, 182);
+    assert.match(ctx.note, /额度已用完/);
+    const loads = afterReturn();
+    delete loads["2026-09-23"];
+    assert.equal(computeLoadContext(mkSeries("2026-09-23", 63, loads), sickRows(), "2026-09-23").phase, "return");
+  });
+
+  test("今天的 0 不算停训日", () => {
+    const pre = (extra: Record<string, number> = {}) => ({ ...preIllness(), ...extra });
+    assert.equal(computeLoadContext(mkSeries("2026-09-18", 63, pre()), [], "2026-09-18").phase, "normal");
+    assert.equal(computeLoadContext(mkSeries("2026-09-18", 63, pre({ "2026-09-18": 20 })), [], "2026-09-18").phase, "normal");
+    assert.equal(computeLoadContext(mkSeries("2026-09-19", 63, pre()), [], "2026-09-19").phase, "return");
+  });
+
+  test("端到端:当天训练不翻转今日建议", () => {
+    const base = deriveDailyContext(e2eInputs());
+    const inp = e2eInputs();
+    const noToday = deriveDailyContext({ ...inp, logs: inp.logs.filter((l) => l.date !== "2026-09-21") });
+    assert.equal(base.readiness.level, noToday.readiness.level);
+    assert.equal(base.readiness.headline, noToday.readiness.headline);
+    assert.equal(base.readiness.detail, noToday.readiness.detail);
+    assert.deepEqual(base.trainingStatus.acwr, noToday.trainingStatus.acwr);
+    const wl = (c: typeof base) => (c.loadContext.phase === "return" ? c.loadContext.weekLoad : null);
+    assert.notEqual(wl(base), wl(noToday));
+  });
+
+  test("firstTrainingDate 推导 historyStart", () => {
+    assert.doesNotThrow(() => deriveDailyContext({ ...e2eInputs(), firstTrainingDate: "2026-08-15" }));
+    const late = deriveDailyContext({ ...e2eInputs(), firstTrainingDate: "2026-09-15" });
+    assert.equal(late.trainingStatus.acwr.value, null);
+    assert.match(late.trainingStatus.acwr.note ?? "", /累计中/);
   });
 });

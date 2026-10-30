@@ -127,14 +127,19 @@ export function buildDailyLoadSeries(
 
 // ---------- EWMA(指数加权移动平均) ----------
 
-// λ = 2/(τ+1),τ 为天数;首值用序列首项初始化。
+// 负荷序列窗口:91 天(约 3 个月)。EWMA 起点残余权重:CTL (1-2/43)^91≈1.3%,慢性(τ=28)≈0.2%,
+// 起点是练是休对指标的影响可忽略。
+export const LOAD_SERIES_DAYS = 91;
+// 计数类统计(估计 RPE 次数、额外活动列表、时长修正次数)仍按近 35 天,避免卡片列出三个月条目。
+const STATS_WINDOW_DAYS = 35;
+
+// λ = 2/(τ+1)。0 起点 + 偏差校正(除以 1-(1-λ)^n):等价于对已有天数做指数加权平均。
+// 旧版用首项做种子,CTL 在 35 天窗口里首日权重≈20%,指标随"窗口首日练没练"每天跳。
 export function ewma(values: number[], lambda: number): number {
   if (values.length === 0) return 0;
-  let acc = values[0];
-  for (let i = 1; i < values.length; i++) {
-    acc = values[i] * lambda + acc * (1 - lambda);
-  }
-  return acc;
+  let acc = 0;
+  for (const v of values) acc = v * lambda + acc * (1 - lambda);
+  return acc / (1 - (1 - lambda) ** values.length);
 }
 
 // ---------- ACWR 急慢性负荷比(Williams 2017, EWMA 版) ----------
@@ -186,9 +191,9 @@ export function hrLoadAu(lightS: number, moderateS: number, vigorousS: number, p
 }
 
 export interface HrLoadStatus {
-  load7d: number; // 近 7 天心率负荷 AU
+  load7d: number; // 截至昨天的近 7 天心率负荷 AU
   acwr: AcwrResult;
-  daysWithHr: number; // 窗口内有手环运动记录的天数
+  daysWithHr: number; // 近 35 天(含今天)内有手环运动记录的天数
   daily?: HrDay[]; // 逐日明细(总览卡展开表用;agent 侧不带,payload 控制)
 }
 
@@ -202,29 +207,35 @@ export interface HrDay {
   load: number; // 心率负荷 AU
 }
 
-// 与 computeTrainingStatus 同窗口的并行心率负荷状态。hrLoadsByDate 是
-// "日期 → 当日心率负荷 AU"(由 hrLoadAu 从 google_daily_metrics 的分区秒数算出)。
+// 与 computeTrainingStatus 同口径的并行心率负荷状态:EWMA 输入截至昨天(今天的运动还没练完/同步完),
+// 窗口 LOAD_SERIES_DAYS 天;早于 historyStart(设备首条同步日)的日子是"没数据"不是休息日,不进 EWMA。
+// hrLoadsByDate 是"日期 → 当日心率负荷 AU"(由 hrLoadAu 从 google_daily_metrics 的分区秒数算出)。
 // 没开手环运动模式的日子负荷为 0——与 RPE 侧"该练没练"含义不同,它还混着"没戴/没记录",
 // 所以两者背离时先查 daysWithHr 再下结论。
 export function computeHrLoadStatus(
   hrLoadsByDate: Map<string, number>,
-  today: string = localToday()
+  today: string = localToday(),
+  opts: { days?: number; historyStart?: string | null } = {}
 ): HrLoadStatus {
-  const loads: number[] = [];
+  const n = opts.days ?? LOAD_SERIES_DAYS;
+  const arr: { date: string; load: number }[] = [];
   const end = new Date(`${today}T00:00:00`);
-  for (let i = 34; i >= 0; i--) {
+  for (let i = n - 1; i >= 0; i--) {
     const d = new Date(end);
     d.setDate(d.getDate() - i);
     const datestr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    loads.push(hrLoadsByDate.get(datestr) ?? 0);
+    arr.push({ date: datestr, load: hrLoadsByDate.get(datestr) ?? 0 });
   }
-  const daysWithHr = loads.filter((v) => v > 0).length;
+  const settled = arr.slice(0, -1); // 截至昨天
+  const hs = opts.historyStart ?? null;
+  const ewmaInput = hs ? settled.filter((d) => d.date >= hs) : settled;
+  const daysWithHr = arr.slice(-STATS_WINDOW_DAYS).filter((d) => d.load > 0).length;
   const acwr =
     daysWithHr === 0
       ? { value: null, acute: null, chronic: null, zone: null, note: "暂无手环运动记录,开一次运动模式即有心率负荷" }
-      : acwrFromLoads(loads);
+      : acwrFromLoads(ewmaInput.map((d) => d.load));
   return {
-    load7d: Math.round(loads.slice(-7).reduce((a, b) => a + b, 0)),
+    load7d: Math.round(settled.slice(-7).reduce((a, b) => a + b.load, 0)),
     acwr,
     daysWithHr,
   };
@@ -377,8 +388,10 @@ export function computeSleepNeed(
 // ---------- 汇总 ----------
 
 export interface TrainingStatus {
-  series: DailyLoadPoint[]; // 近 28 天(供迷你图/工具引用)
+  series: DailyLoadPoint[]; // 近 28 天(含今天;供迷你图/工具引用)
   yesterdayLoad: number; // 昨日负荷(AU),睡眠需求的输入之一
+  todayLoad: number; // 今天已练(AU),仅展示;ACWR/Form/周负荷截至昨天,今天的负荷明天计入
+  asOf: string; // 决策指标截至日期(=昨天)
   acwr: AcwrResult;
   form: FormResult;
   weekly: WeeklyLoadResult;
@@ -391,27 +404,35 @@ export interface TrainingStatus {
   hr?: HrLoadStatus; // 心率负荷对照(数据来自 Google 同步,调用方有就带上)
 }
 
-// 默认 35 天窗口:28 天慢性池 + 7 天缓冲(EWMA 初值衰减)。
+// 默认 LOAD_SERIES_DAYS 天窗口。决策指标(ACWR/Form/周负荷)一律截至昨天:今天还没练完,
+// 按 0 计入会把早上的 ACWR 系统性压低、TSB 偏新鲜。historyStart 为首个记录日,
+// 早于它是"还没开始记录"而不是休息日,不进 EWMA。series 与 todayLoad 含今天,仅供展示。
 export function computeTrainingStatus(
   logs: TrainingLogRow[],
-  opts: { days?: number; today?: string; extraActivities?: ExtraActivity[] } = {}
+  opts: { days?: number; today?: string; extraActivities?: ExtraActivity[]; historyStart?: string | null } = {}
 ): TrainingStatus {
-  const days = opts.days ?? 35;
+  const days = Math.max(opts.days ?? LOAD_SERIES_DAYS, 8); // <8 天时截至昨天不足一周,周负荷会算出 NaN
   const full = buildDailyLoadSeries(logs, days, opts.today, opts.extraActivities ?? []);
-  const windowStart = full[0]?.date ?? "";
-  const windowEnd = full[full.length - 1]?.date ?? "";
+  const settled = full.slice(0, -1); // 截至昨天:今天未练完,按 0 计入会把早上的 ACWR/TSB 系统性压低
+  const hs = opts.historyStart ?? null;
+  const ewmaInput = hs ? settled.filter((p) => p.date >= hs) : settled; // 首个记录日之前是"没数据",不是休息日
+  const stats = full.slice(-STATS_WINDOW_DAYS);
+  const windowStart = stats[0]?.date ?? "";
+  const windowEnd = stats[stats.length - 1]?.date ?? "";
   const inWindow = (d: string) => d >= windowStart && d <= windowEnd;
   const extras = (opts.extraActivities ?? []).filter((a) => a.load > 0 && inWindow(a.date));
-  const estimatedSessions = full.reduce((acc, p) => acc + p.estimatedSessions, 0);
-  const totalSessions = full.reduce((acc, p) => acc + p.sessions, 0);
+  const estimatedSessions = stats.reduce((acc, p) => acc + p.estimatedSessions, 0);
+  const totalSessions = stats.reduce((acc, p) => acc + p.sessions, 0);
   // 无 RPE 模式只看训记训练:额外活动的负荷来自心率,不该把"全部估算"判定翻掉。
   const liftingSessions = totalSessions - extras.length;
   return {
     series: full.slice(-28),
-    yesterdayLoad: full.length >= 2 ? full[full.length - 2].load : 0,
-    acwr: computeAcwr(full),
-    form: computeForm(full),
-    weekly: computeWeeklyLoad(full),
+    yesterdayLoad: settled.at(-1)?.load ?? 0,
+    todayLoad: full.at(-1)?.load ?? 0,
+    asOf: settled.at(-1)?.date ?? "",
+    acwr: computeAcwr(ewmaInput),
+    form: computeForm(ewmaInput),
+    weekly: computeWeeklyLoad(settled),
     estimatedSessions,
     totalSessions,
     allSessionsEstimated: liftingSessions > 0 && estimatedSessions === liftingSessions,

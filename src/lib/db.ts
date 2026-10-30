@@ -652,6 +652,12 @@ export function queryTrainingHistoryDetailed(days: number) {
   return logs;
 }
 
+// 最早一条训练记录日期:训练状态 EWMA 的起点(早于它是"还没开始记录",不是休息日)。
+export function getFirstTrainingDate(): string | null {
+  const row = getDb().prepare(`SELECT MIN(date) AS d FROM training_log`).get() as { d: string | null } | undefined;
+  return row?.d ?? null;
+}
+
 // --- Muscle recovery ---
 
 export function queryMuscleRecovery() {

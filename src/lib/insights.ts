@@ -51,6 +51,7 @@ export function computeInsights(ctx?: DailyContext): void {
   }
 
   // 3. 负荷:ACWR 超 1.3 提醒,超 1.5 警告(与教练提示词同口径)。
+  // ACWR 截至昨天:今天练爆了次日早上才点火,同一天内结论稳定。
   const acwr = status.acwr.value;
   if (acwr !== null && acwr > 1.5) {
     upsertInsight("acwr_high", today, "alert", "急性负荷峰值", `急慢性负荷比 ${acwr.toFixed(2)}(>1.5)。近期加量过猛，这一两天只做轻松恢复，把慢性池追上来。`);

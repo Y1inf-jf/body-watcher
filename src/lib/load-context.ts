@@ -86,7 +86,10 @@ export function computeLoadContext(
   googleRowsAsc: GoogleMetricRow[],
   today: string
 ): LoadContext {
-  const gap = findRecentGap(series, today);
+  // 进不进/退不退回归期只看已结束的日子:今天的 0 不算停训日,今天练完也不当场判退出——
+  // 否则同一天早晚阶段不同,今日建议跟着翻。本周已练(weekLoad)与 resumeDate 仍含今天。
+  const settled = series.filter((p) => p.date < today);
+  const gap = findRecentGap(settled, today);
   const signals = illnessSignalDays(googleRowsAsc).filter(
     (d) => d <= today && daysBetween(d, today) < ILLNESS_WINDOW_DAYS
   );
@@ -108,10 +111,10 @@ export function computeLoadContext(
     // 又因为那次达标的负荷滚出窗口而"退回"回归期(真实场景:9/19 打球后 9/23 出窗口、9/26 又弹回)。
     const everMetBaseline =
       baseWeekly > 0 &&
-      series.some((p) => {
-        if (p.date < resumeDate || p.date > today) return false;
-        const idx = series.indexOf(p);
-        const trailing7 = sumLoad(series.slice(Math.max(0, idx - 6), idx + 1));
+      settled.some((p) => {
+        if (p.date < resumeDate) return false;
+        const idx = settled.indexOf(p);
+        const trailing7 = sumLoad(settled.slice(Math.max(0, idx - 6), idx + 1));
         return trailing7 >= baseWeekly;
       });
     if (daysBetween(resumeDate, today) >= RETURN_MAX_DAYS || everMetBaseline) {
