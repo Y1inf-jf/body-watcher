@@ -53,3 +53,7 @@ scripts/google-health-spike/.tokens.json
 AGENTS.md
 # WorkBuddy 工作区数据(记忆/笔记/缓存),仅本机使用,不入库
 .workbuddy-ai/
+
+# Local machine migration bundle (contains credentials)
+/new_book/
+/new_book.zip
