@@ -4,7 +4,7 @@
 
 > 自建版 Whoop —— Fitbit Air 手环 + 训记训练记录 + 本地恢复算法 + LLM 教练，量化每天的身体状态。
 
-基于 Next.js 16（App Router）+ React 19 + TypeScript + better-sqlite3 构建，Tailwind CSS + Recharts 的暗色 Whoop 风仪表盘。数据全自动入库：手环经 Google Health API、训练经训记 App Open API 镜像，再由确定性算法压成三个数字（恢复分 / 训练状态 / 睡眠需求），LLM 基于这些结果做恢复分析与排课。
+基于 Next.js 16（App Router）+ React 19 + TypeScript + better-sqlite3 构建，Tailwind CSS + Recharts 的暖石墨暗色"晨间简报"界面（打开即见今天的练休结论）。数据全自动入库：手环经 Google Health API、训练经训记 App Open API 镜像，再由确定性算法压成三个数字（恢复分 / 训练状态 / 睡眠需求），LLM 基于这些结果做恢复分析与排课。
 
 ## 数据流
 
@@ -16,7 +16,7 @@ Fitbit Air 手环 ──→ Google Health 云 ──→ 本应用自动同步（
                               ↓
         确定性算法：恢复分 0-100 · ACWR · Form · 单调性 · 睡眠需求
                               ↓
-            仪表盘（圆环仪表）  +  LLM 教练（恢复分析 / 训练计划 / 周总结）
+        总览（今日结论 + 刻度条）  +  LLM 教练（恢复分析 / 训练计划 / 周总结）
 ```
 
 ## 功能特性
@@ -28,7 +28,8 @@ Fitbit Air 手环 ──→ Google Health 云 ──→ 本应用自动同步（
 
 ### 📈 恢复与训练状态算法
 - **恢复分 0-100**：HRV / 静息心率对 30 天个人鲁棒基线（中位数/MAD）取 z-score + 睡眠债，按 40/30/30 加权经正态 CDF 映射；<34 红（只轻松恢复）/ 34-66 黄（正常练）/ ≥67 绿（可上强度）
-- **训练状态**：ACWR 急慢性负荷比（EWMA 7/28 天）、Form 体力-疲劳（CTL-ATL-TSB）、Foster 单调性与 strain
+- **训练状态**：ACWR 急慢性负荷比（EWMA 7/28 天）、Form 体力-疲劳（CTL-ATL-TSB）、Foster 单调性与 strain；EWMA 0 起点 + 偏差校正、91 天窗口、自首个记录日起算
+- **截至昨天口径**：负荷类决策指标一律截至昨天，今天已练的负荷单独展示、明天计入，今日建议当天固定、练完不变
 - **回归期**：停训或生病后按病前周均逐周给负荷上限（60% → 80% → 100%），训练时长以手环运动记录校正，打球等运动按心率负荷折算计入
 - **睡眠需求推荐**：个人 7 天均值 + 债务补偿 + 昨日负荷
 - 全部公式、出处论文与适配取舍见 **[docs/training-algorithms.md](docs/training-algorithms.md)**
@@ -39,10 +40,13 @@ Fitbit Air 手环 ──→ Google Health 云 ──→ 本应用自动同步（
 - **周总结**：本周训练概况、亮点与改进建议
 - 均为流式输出，可中途取消
 
-### 📊 仪表盘（Whoop 风暗色）
-- 恢复分与 ACWR **发光圆环仪表**、28 天负荷迷你柱状图
-- HRV / 静息心率 / 睡眠 / 体重体脂渐变趋势图
-- 肌群恢复状态、训练日历、渐进超负荷追踪（Epley / Brzycki / Lombardi 三公式 1RM）
+### 📊 界面（晨间简报风格）
+- **总览**：首屏大字今日结论 + 恢复分 / ACWR / 今晚睡眠需求三个关键数字，各带分区**刻度条**；下接"身体 / 负荷"两栏、肌群恢复网格、28 天负荷柱，以及趋势 / 训练 / 报告明细
+- **训练计划**：教练工作台——桌面左侧对话、右侧会话 / 教练笔记 / 历史计划侧栏；手机用顶部标签切换
+- **数据同步**：Google Health 与训记的状态面板，7 天指标表（指标为行、日期为列）
+- **设置**：分节目录 + 设置项行，保存反馈就近显示
+- HRV / 静息心率 / 睡眠趋势折线图，训练日历、渐进超负荷追踪（Epley / Brzycki / Lombardi 三公式 1RM）
+- 桌面顶栏导航，手机底部标签栏，375px 宽度可用
 
 ## 快速开始
 
@@ -105,7 +109,7 @@ npm run dev
 |------|------|
 | 框架 | Next.js 16.2.7（App Router, Turbopack） |
 | 前端 | React 19, TypeScript 5, Tailwind CSS 4, Geist 字体, lucide-react |
-| 图表 | Recharts 3（渐变面积图） |
+| 图表 | Recharts 3（折线图） |
 | 数据库 | better-sqlite3（本地 SQLite，WAL 模式） |
 | AI | 任意 OpenAI 兼容 API（AI SDK v6 函数调用 + 纯文本流式），默认阿里云百炼 `qwen3.8-flash` |
 | Google 同步 | Google Health API v4 + OAuth2，undici ProxyAgent 按请求代理 |
@@ -162,12 +166,15 @@ body-watcher/
 │   │   │   └── ...               # dashboard / training / plans / advice / stats / export 等
 │   │   ├── login/page.tsx        # 登录页
 │   │   ├── google/page.tsx       # 数据同步页（连接/同步状态/7 天指标）
-│   │   ├── plan/page.tsx         # 训练计划页（恢复分析 / 生成计划 / 历史）
+│   │   ├── plan/page.tsx         # 训练计划页（教练工作台：对话 + 会话/笔记/计划侧栏）
 │   │   ├── settings/page.tsx     # 设置页（个人档案 / 睡眠目标 / LLM 配置）
-│   │   └── page.tsx              # 看板首页（恢复分 + 训练状态圆环仪表）
+│   │   └── page.tsx              # 总览（今日结论 + 关键数字刻度条 + 身体/负荷/明细）
 │   ├── components/
-│   │   ├── ui/                   # Card / GaugeRing 等基础组件
-│   │   └── ...                   # 仪表盘各卡片与表单
+│   │   ├── ui/                   # Section / Stat / ScaleBar / SegmentedTabs 等基础组件
+│   │   ├── shell/                # 顶栏 / 手机底部标签栏
+│   │   ├── plan/                 # 教练工作台子组件（对话 / 会话 / 笔记 / 计划档案）
+│   │   ├── settings/             # 设置项行组件
+│   │   └── ...                   # 总览各分节（KeyMetrics 等）与表单
 │   ├── lib/
 │   │   ├── google/               # Google Health 客户端 / OAuth / 同步解析
 │   │   ├── recovery.ts           # 恢复特征 + 恢复分（纯函数）

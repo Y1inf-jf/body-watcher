@@ -4,7 +4,7 @@ English | [简体中文](./README.md)
 
 > A self-hosted Whoop — Fitbit Air band + gym-log data + local recovery algorithms + an LLM coach, quantifying your body state every day.
 
-Built with Next.js 16 (App Router) + React 19 + TypeScript + better-sqlite3, with a dark Whoop-style dashboard in Tailwind CSS + Recharts. All data flows in automatically: wearable metrics via the Google Health API, workouts mirrored from the XunJi gym-logging app. Deterministic algorithms compress them into three numbers (recovery score / training status / sleep need), and an LLM coach turns those into daily recovery analysis and training plans.
+Built with Next.js 16 (App Router) + React 19 + TypeScript + better-sqlite3, with a warm-graphite dark "morning briefing" UI in Tailwind CSS + Recharts (open it and today's train/rest verdict comes first). All data flows in automatically: wearable metrics via the Google Health API, workouts mirrored from the XunJi gym-logging app. Deterministic algorithms compress them into three numbers (recovery score / training status / sleep need), and an LLM coach turns those into daily recovery analysis and training plans.
 
 ## Data Flow
 
@@ -16,7 +16,7 @@ XunJi app ─────→ Open API ───────────→ exerc
                               ↓
      Deterministic algorithms: recovery 0-100 · ACWR · Form · monotony · sleep need
                               ↓
-        Dashboard (gauge rings)  +  LLM coach (recovery / plans / weekly summary)
+   Overview (today's verdict + scale bars)  +  LLM coach (recovery / plans / weekly summary)
 ```
 
 ## Features
@@ -27,8 +27,10 @@ XunJi app ─────→ Open API ───────────→ exerc
 - Manual entry is hidden by default (route kept for plan-execution prefill and editing)
 
 ### 📈 Recovery & training-status algorithms
-- **Recovery score 0-100**: HRV / resting HR z-scored against a 21-day personal baseline plus sleep debt, weighted 40/30/30 and mapped through a normal CDF; <34 red (take it easy) / 34-66 yellow (train normally) / ≥67 green (push hard)
-- **Training status**: ACWR acute:chronic ratio (EWMA 7/28d), Form fitness-fatigue (CTL-ATL-TSB), Foster monotony & strain
+- **Recovery score 0-100**: HRV / resting HR z-scored against a 30-day robust personal baseline (median/MAD) plus sleep debt, weighted 40/30/30 and mapped through a normal CDF; <34 red (take it easy) / 34-66 yellow (train normally) / ≥67 green (push hard)
+- **Training status**: ACWR acute:chronic ratio (EWMA 7/28d), Form fitness-fatigue (CTL-ATL-TSB), Foster monotony & strain; EWMA uses a zero start with bias correction over a 91-day window, starting from the first logged day
+- **As-of-yesterday metrics**: load-based decision metrics are computed through yesterday; today's load is shown separately and counted tomorrow, so today's advice stays fixed after you train
+- **Return-to-training phase**: after a layoff or illness, weekly load caps ramp from the pre-break weekly average (60% → 80% → 100%); workout durations are corrected from band sessions, and sports like ball games count via heart-rate load
 - **Sleep-need recommendation**: personal 7-day average + debt repayment + yesterday's load
 - Full formulas, references, and adaptation notes in **[docs/training-algorithms.md](docs/training-algorithms.md)** (Chinese)
 
@@ -38,10 +40,13 @@ XunJi app ─────→ Open API ───────────→ exerc
 - **Weekly summary**: highlights and adjustments
 - All streams are live and cancellable
 
-### 📊 Dashboard (Whoop-style dark UI)
-- Glowing **gauge rings** for recovery score and ACWR, 28-day load bars
-- Gradient area charts for HRV / resting HR / sleep / weight & body fat
-- Muscle-group recovery, training calendar, progressive-overload tracker (Epley / Brzycki / Lombardi 1RM)
+### 📊 Interface (morning-briefing style)
+- **Overview**: a large verdict for today plus three key numbers — recovery score, ACWR, tonight's sleep need — each with a zoned **scale bar**; below are Body / Load sections, a muscle-recovery grid, 28-day load bars, and Trends / Training / Reports details
+- **Plans**: a coach workbench — chat on the left, sessions / coach notes / plan archive on the right; tabs on mobile
+- **Sync**: a status panel for Google Health and XunJi, plus a 7-day table (metrics as rows, dates as columns)
+- **Settings**: section index + setting rows, with save feedback shown next to each section
+- Line charts for HRV / resting HR / sleep, training calendar, progressive-overload tracker (Epley / Brzycki / Lombardi 1RM)
+- Top navigation on desktop, bottom tab bar on phones; usable at 375px
 
 ## Getting Started
 
@@ -103,7 +108,7 @@ Open [http://localhost:3000](http://localhost:3000). Trigger a XunJi backfill on
 |------|------|
 | Framework | Next.js 16.2.7 (App Router, Turbopack) |
 | Frontend | React 19, TypeScript 5, Tailwind CSS 4, Geist fonts, lucide-react |
-| Charts | Recharts 3 (gradient area charts) |
+| Charts | Recharts 3 (line charts) |
 | Database | better-sqlite3 (local SQLite, WAL mode) |
 | AI | Any OpenAI-compatible API (AI SDK v6 function calling + plain-text streaming), Bailian `qwen3.8-flash` by default |
 | Google sync | Google Health API v4 + OAuth2, per-request undici ProxyAgent |
@@ -165,12 +170,15 @@ body-watcher/
 │   │   │   └── ...               # dashboard / training / plans / advice / stats / export
 │   │   ├── login/page.tsx        # Login page
 │   │   ├── google/page.tsx       # Sync page (connect / status / 7-day metrics)
-│   │   ├── plan/page.tsx         # Plan page (recovery analysis / generation / history)
+│   │   ├── plan/page.tsx         # Plan page (coach workbench: chat + sessions/notes/plans sidebar)
 │   │   ├── settings/page.tsx     # Settings (profile / sleep targets / LLM config)
-│   │   └── page.tsx              # Dashboard (recovery + training-status gauge rings)
+│   │   └── page.tsx              # Overview (verdict + key-metric scale bars + body/load/details)
 │   ├── components/
-│   │   ├── ui/                   # Card / GaugeRing primitives
-│   │   └── ...                   # dashboard cards & forms
+│   │   ├── ui/                   # Section / Stat / ScaleBar / SegmentedTabs primitives
+│   │   ├── shell/                # top nav / mobile bottom tab bar
+│   │   ├── plan/                 # coach-workbench parts (chat / sessions / notes / plan archive)
+│   │   ├── settings/             # setting-row components
+│   │   └── ...                   # overview sections (KeyMetrics, etc.) & forms
 │   ├── lib/
 │   │   ├── google/               # Google Health client / OAuth / sync parsing
 │   │   ├── recovery.ts           # recovery features + score (pure functions)
