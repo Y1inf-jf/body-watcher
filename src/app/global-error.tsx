@@ -10,16 +10,13 @@ export default function GlobalError({
 }) {
   return (
     <html lang="zh-CN" className="dark">
-      <body className="bg-zinc-950 text-zinc-100 min-h-screen flex items-center justify-center">
+      <body className="bg-bg text-ink min-h-dvh flex items-center justify-center">
         <div className="text-center">
-          <h2 className="text-lg font-bold mb-2">应用发生严重错误</h2>
-          <p className="text-zinc-500 text-sm mb-6">
+          <h2 className="text-lg font-semibold mb-2">应用发生严重错误</h2>
+          <p className="text-ink-3 text-sm mb-6">
             {error.message || "未知错误"}
           </p>
-          <button
-            onClick={() => unstable_retry()}
-            className="rounded-lg bg-accent/90 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent"
-          >
+          <button onClick={() => unstable_retry()} className="btn btn-primary">
             重试
           </button>
         </div>

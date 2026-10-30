@@ -11,10 +11,11 @@ export interface InsightView {
   detail: string;
 }
 
-const LEVEL_STYLE: Record<InsightView["level"], { box: string; text: string; icon: typeof Lightbulb }> = {
-  info: { box: "border-blue-800/50 bg-blue-950/40", text: "text-blue-200", icon: Lightbulb },
-  warn: { box: "border-zone-amber/40 bg-zone-amber/10", text: "text-zone-amber", icon: AlertTriangle },
-  alert: { box: "border-zone-red/40 bg-zone-red/10", text: "text-zone-red", icon: OctagonAlert },
+// 级别色只给图标,文字保持中性。
+const LEVEL_STYLE: Record<InsightView["level"], { icon: string; Icon: typeof Lightbulb }> = {
+  info: { icon: "text-accent", Icon: Lightbulb },
+  warn: { icon: "text-zone-amber", Icon: AlertTriangle },
+  alert: { icon: "text-zone-red", Icon: OctagonAlert },
 };
 
 // 主动洞察横幅:同步后规则引擎产出,数据性提醒(睡眠债/负荷峰值/停训空窗/闭环滞留)。
@@ -28,30 +29,26 @@ export default function InsightBanner({
 }) {
   if (insights.length === 0) return null;
   return (
-    <div className="space-y-2">
+    <ul className="divide-y divide-line">
       {insights.map((it) => {
-        const s = LEVEL_STYLE[it.level];
-        const Icon = s.icon;
+        const { icon, Icon } = LEVEL_STYLE[it.level];
         return (
-          <div
-            key={it.id}
-            className={`flex items-start gap-2.5 rounded-lg border p-3 text-sm ${s.box} animate-fade-up`}
-          >
-            <Icon size={15} className={`mt-0.5 shrink-0 ${s.text}`} />
-            <p className="min-w-0 flex-1 leading-relaxed">
-              <span className={`font-medium ${s.text}`}>{it.title}</span>
-              <span className="text-zinc-400"> · {it.detail}</span>
+          <li key={it.id} className="animate-fade-up flex items-start gap-3 py-3 first:pt-0 last:pb-0">
+            <Icon size={16} className={`mt-0.5 shrink-0 ${icon}`} />
+            <p className="min-w-0 flex-1 text-sm leading-relaxed">
+              <span className="font-medium text-ink">{it.title}</span>
+              <span className="text-ink-2"> · {it.detail}</span>
             </p>
             <button
               onClick={() => onDismiss?.(it.id)}
-              className="shrink-0 text-zinc-600 transition-colors hover:text-zinc-300"
+              className="-mr-2 grid h-8 w-8 shrink-0 place-items-center rounded-md text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
               aria-label="知道了,收起这条提醒"
             >
               <X size={14} />
             </button>
-          </div>
+          </li>
         );
       })}
-    </div>
+    </ul>
   );
 }

@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { LockKeyhole } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -36,35 +35,31 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-1 items-center justify-center p-6">
-      <form onSubmit={submit} className="panel animate-fade-up w-full max-w-sm p-8">
-        <div className="mb-7 flex items-center gap-2.5">
-          <span className="relative flex h-2.5 w-2.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-50" />
-            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-accent" />
-          </span>
-          <h1 className="font-mono text-xs font-semibold uppercase tracking-[0.22em] text-zinc-100">
+    <div className="mx-auto flex min-h-[75dvh] max-w-sm flex-col justify-center">
+      <form onSubmit={submit} className="animate-fade-up">
+        <div className="mb-10 flex items-center gap-2.5">
+          <span aria-hidden className="h-2 w-2 rounded-[2px] bg-ink" />
+          <span className="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-ink">
             Body Watcher
-          </h1>
+          </span>
         </div>
-        <div className="mb-1 flex items-center gap-2 text-sm text-zinc-300">
-          <LockKeyhole size={15} strokeWidth={1.8} /> 输入访问密码
-        </div>
-        <p className="mb-5 text-xs text-zinc-600">通过后 30 天内本浏览器免登录。</p>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">输入访问密码</h1>
+        <p className="mb-6 mt-2 text-sm text-ink-3">通过后 30 天内本浏览器免登录。</p>
         <input
           type="password"
           autoFocus
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="密码"
-          className="w-full rounded-lg border border-white/10 bg-white/[0.04] px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none"
+          aria-label="访问密码"
+          className="field w-full"
         />
-        {error && <p className="mt-2 text-xs text-zone-red">{error}</p>}
-        <button
-          type="submit"
-          disabled={busy || !password}
-          className="mt-4 w-full rounded-lg bg-accent/90 py-2.5 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-40"
-        >
+        {error && (
+          <p role="alert" className="mt-2 text-xs text-zone-red">
+            {error}
+          </p>
+        )}
+        <button type="submit" disabled={busy || !password} className="btn btn-primary mt-4 w-full">
           {busy ? "验证中…" : "进入"}
         </button>
       </form>

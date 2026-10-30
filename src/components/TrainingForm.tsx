@@ -425,31 +425,31 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
         <input
           type="date"
           value={date}
           onChange={(e) => setDate(e.target.value)}
-          className="bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm"
+          className="field"
         />
         <input
           type="number"
           placeholder="时长 (min)"
           value={duration}
           onChange={(e) => setDuration(e.target.value)}
-          className="bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm w-28"
+          className="field w-28"
         />
         <input
           type="number"
           placeholder="整体 RPE"
           value={rpe}
           onChange={(e) => setRpe(e.target.value)}
-          className="bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm w-28"
+          className="field w-28"
         />
         <button
           type="submit"
           disabled={saving}
-          className="rounded-lg bg-accent/90 px-4 py-1.5 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-50"
+          className="btn btn-primary"
         >
           {saving ? "保存中..." : editId ? "更新训练" : "保存训练"}
         </button>
@@ -458,26 +458,26 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
 
       {templates.length > 0 && (
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-zinc-500">模板：</span>
+          <span className="text-xs text-ink-3">模板：</span>
           {templates.map((t) => (
             <span key={t.id} className="flex items-center gap-1">
               <button
                 type="button"
                 onClick={() => loadTemplate(t)}
-                className="text-xs bg-zinc-800 text-zinc-400 hover:text-zinc-200 px-2 py-1 rounded"
+                className="chip"
               >
                 {t.name}
               </button>
-              <button type="button" onClick={() => deleteTemplate(t.id)} className="text-zinc-600 hover:text-zone-red text-xs">x</button>
+              <button type="button" onClick={() => deleteTemplate(t.id)} className="text-ink-3 hover:text-zone-red text-xs">x</button>
             </span>
           ))}
-          <button type="button" onClick={saveAsTemplate} className="text-xs text-zinc-500 hover:text-zinc-300 ml-2">
+          <button type="button" onClick={saveAsTemplate} className="text-xs text-ink-3 hover:text-ink-2 ml-2">
             + 存为模板
           </button>
         </div>
       )}
       {templates.length === 0 && (
-        <button type="button" onClick={saveAsTemplate} className="text-xs text-zinc-500 hover:text-zinc-300">
+        <button type="button" onClick={saveAsTemplate} className="text-xs text-ink-3 hover:text-ink-2">
           保存当前训练为模板
         </button>
       )}
@@ -486,7 +486,7 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
         {blocks.map((block, bi) => {
           const filtered = activeSuggestion === bi ? getFilteredSuggestions(block.exercise_name) : [];
           return (
-            <div key={bi} className="rounded-lg border border-white/5 bg-white/[0.02] p-3">
+            <div key={bi} className="border-t border-line pt-3">
               <div className="flex items-center gap-2 mb-2">
                 <div className="relative flex-1" ref={activeSuggestion === bi ? suggestionRef : undefined}>
                   <input
@@ -501,26 +501,26 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
                     onKeyDown={(e) => {
                       if (e.key === "Escape") setActiveSuggestion(null);
                     }}
-                    className="bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm w-full font-medium"
+                    className="field w-full font-medium"
                   />
                   {filtered.length > 0 && (
-                    <div className="absolute top-full left-0 right-0 mt-1 bg-zinc-800 border border-zinc-700 rounded shadow-lg z-10 max-h-60 overflow-y-auto">
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-surface border border-line-strong rounded-md shadow-lg z-10 max-h-60 overflow-y-auto">
                       {filtered.map((s) => (
                         <button
                           key={s.exercise_name + (s.source ?? "")}
                           type="button"
                           onClick={() => selectExercise(bi, s)}
-                          className="w-full text-left px-3 py-1.5 text-sm hover:bg-zinc-700 flex items-center justify-between"
+                          className="w-full text-left px-3 py-1.5 text-sm hover:bg-surface-2 flex items-center justify-between"
                         >
                           <span>{s.exercise_name}</span>
                           <span className="flex items-center gap-1">
                             {s.equipment && (
-                              <span className="text-xs text-zinc-600">{s.equipment}</span>
+                              <span className="text-xs text-ink-3">{s.equipment}</span>
                             )}
                             {s.source === "library" ? (
                               <span className="text-xs text-accent">[库]</span>
                             ) : s.muscle_group ? (
-                              <span className="text-xs text-zinc-500">[{s.muscle_group}]</span>
+                              <span className="text-xs text-ink-3">[{s.muscle_group}]</span>
                             ) : null}
                           </span>
                         </button>
@@ -531,7 +531,7 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
                 <select
                   value={block.muscle_group}
                   onChange={(e) => updateBlock(bi, "muscle_group", e.target.value)}
-                  className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm"
+                  className="field px-2"
                 >
                   {MUSCLE_GROUPS.map((g) => (
                     <option key={g} value={g}>{g}</option>
@@ -549,7 +549,7 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
               </div>
 
               <div className="space-y-1">
-                <div className="flex items-center gap-2 text-xs text-zinc-500 px-1">
+                <div className="flex items-center gap-2 text-xs text-ink-3 px-1">
                   <span className="w-6 text-center">组</span>
                   <span className="w-12 text-center">次数</span>
                   <span className="w-20 text-center">重量</span>
@@ -558,17 +558,17 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
                 </div>
                 {block.sets.map((set, si) => (
                   <div key={si} className="flex items-center gap-2">
-                    <span className="text-xs text-zinc-500 w-6 text-center">{si + 1}</span>
+                    <span className="text-xs text-ink-3 w-6 text-center">{si + 1}</span>
                     <input
                       type="number"
                       placeholder="次"
                       value={set.reps}
                       onChange={(e) => updateSet(bi, si, "reps", e.target.value)}
-                      className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm w-12 text-center"
+                      className="field w-12 px-2 text-center"
                     />
                     <div className="flex items-center gap-1 w-20">
                       {set.bodyweight ? (
-                        <span className="bg-zinc-700 border border-zinc-600 rounded px-2 py-1.5 text-sm w-full text-center text-zinc-300">
+                        <span className="bg-surface-2 border border-line-strong rounded-md px-2 py-2 text-base md:text-sm w-full text-center text-ink-2">
                           自重
                         </span>
                       ) : (
@@ -578,17 +578,18 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
                           placeholder="kg"
                           value={set.weight}
                           onChange={(e) => updateSet(bi, si, "weight", e.target.value)}
-                          className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm w-full text-center"
+                          className="field w-full px-2 text-center"
                         />
                       )}
                       <button
                         type="button"
                         onClick={() => updateSet(bi, si, "bodyweight", !set.bodyweight)}
-                        className={`text-xs px-1 py-1.5 rounded ${
+                        className={`shrink-0 text-xs px-1.5 py-2 rounded-md ${
                           set.bodyweight
-                            ? "bg-amber-700 text-amber-100"
-                            : "bg-zinc-800 text-zinc-500 hover:text-zinc-300"
+                            ? "bg-zone-amber/20 text-zone-amber"
+                            : "bg-surface-2 text-ink-3 hover:text-ink-2"
                         }`}
+                        aria-pressed={set.bodyweight}
                         title="切换自重"
                       >
                         BW
@@ -599,7 +600,7 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
                       placeholder="RPE"
                       value={set.rpe}
                       onChange={(e) => updateSet(bi, si, "rpe", e.target.value)}
-                      className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm w-12 text-center"
+                      className="field w-12 px-2 text-center"
                     />
                     {block.sets.length > 1 ? (
                       <button
@@ -619,7 +620,7 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
               <button
                 type="button"
                 onClick={() => addSet(bi)}
-                className="text-accent hover:text-accent/80 text-xs mt-2"
+                className="text-accent hover:text-accent/80 text-xs mt-2 py-1"
               >
                 + 添加一组
               </button>
@@ -631,7 +632,7 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
       <button
         type="button"
         onClick={addBlock}
-        className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 px-4 py-1.5 rounded text-sm"
+        className="btn btn-secondary btn-sm"
       >
         + 添加动作
       </button>
@@ -642,7 +643,7 @@ export default function TrainingForm({ editId, initialDate, templateData, templa
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           placeholder="训练备注..."
-          className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm"
+          className="field w-full"
         />
       </div>
     </form>

@@ -1,55 +1,18 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import {
-  Send,
-  Square,
-  Plus,
-  Trash2,
-  Pin,
-  ClipboardList,
-  HeartPulse,
-  MessageSquarePlus,
-  Check,
-} from "lucide-react";
-import Markdown from "@/components/Markdown";
+import { MessageSquarePlus } from "lucide-react";
+import PageHeader from "@/components/ui/PageHeader";
+import SegmentedTabs, { tabPanelProps } from "@/components/ui/SegmentedTabs";
+import ChatPanel from "@/components/plan/ChatPanel";
+import SessionList from "@/components/plan/SessionList";
+import CoachNotes from "@/components/plan/CoachNotes";
+import PlanArchive from "@/components/plan/PlanArchive";
+import type { ChatMessage, ChatSession, CoachNote } from "@/components/plan/types";
 
-interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-}
-
-interface ChatSession {
-  id: number;
-  title: string | null;
-  created_at: string;
-  updated_at: string;
-  message_count: number;
-}
-
-interface CoachNote {
-  id: number;
-  content: string;
-  source: string;
-  pinned: number;
-  expires_at: string | null;
-  created_at: string;
-}
-
-const todayStr = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
-// expires_at 是"有效期至",当天仍有效、次日过期(与注入侧 SQL 的 expires_at > now 口径一致)。
-const isExpired = (date: string | null) => date !== null && date < todayStr();
-
-// 会话列表右侧时间标签:当天只显时间,跨年带年份。
-const sessionLabel = (s: ChatSession) => {
-  const d = s.updated_at.slice(0, 10);
-  const hm = s.updated_at.slice(11, 16);
-  if (d === todayStr()) return `今天 ${hm}`;
-  return d.slice(0, 5) === todayStr().slice(0, 5) ? d.slice(5) : d;
-};
+// 右栏(桌面)/ 手机 tab 里的三个上下文面板。
+type SideTab = "sessions" | "notes" | "plans";
+type MobileView = "chat" | SideTab;
 
 export default function PlanPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -58,11 +21,12 @@ export default function PlanPage() {
   const [streaming, setStreaming] = useState(false);
   const [input, setInput] = useState("");
   const [notes, setNotes] = useState<CoachNote[]>([]);
-  const [noteInput, setNoteInput] = useState("");
-  const [pinNew, setPinNew] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  // 纯 UI 状态:手机/平板当前视图、桌面右栏当前 tab。
+  const [mobileView, setMobileView] = useState<MobileView>("chat");
+  const [sideTab, setSideTab] = useState<SideTab>("sessions");
   // send 闭包拿不到最新 sessionId,用 ref 同步兜底建会话后的响应头值。
   const sessionIdRef = useRef<number | null>(null);
   useEffect(() => {
@@ -208,7 +172,7 @@ export default function PlanPage() {
     setComposing(true);
   };
 
-  // 历史条目点击 = 在上方面板展开该会话(已展开时点击则收起;与草稿卡互斥)。
+  // 历史条目点击 = 在对话区展开该会话(已展开时点击则收起;与草稿互斥)。
   const toggleSession = (id: number) => {
     if (streaming) return;
     setComposing(false);
@@ -228,605 +192,112 @@ export default function PlanPage() {
     fetchSessions();
   };
 
-  const addNote = async () => {
-    const content = noteInput.trim();
-    if (!content) return;
-    await fetch("/api/coach-notes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content, pinned: pinNew ? 1 : 0 }),
-    });
-    setNoteInput("");
-    setPinNew(false);
-    fetchNotes();
-  };
-
-  const togglePin = async (n: CoachNote) => {
-    await fetch("/api/coach-notes", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: n.id, pinned: n.pinned ? 0 : 1 }),
-    });
-    fetchNotes();
-  };
-
-  const deleteNote = async (id: number) => {
-    await fetch(`/api/coach-notes?id=${id}`, { method: "DELETE" });
-    fetchNotes();
-  };
-
-  // 草稿卡展示条件:正在新建,或尚无任何会话(首次引导)。
+  // 草稿视图展示条件:正在新建,或尚无任何会话(首次引导)。
   const showComposer = composing || (historyLoaded && sessions.length === 0);
   // 当前展开的历史会话(列表里对应条目,取标题用)。
   const activeSession = sessions.find((s) => s.id === sessionId);
+  // 正在查看某条已有会话;否则对话栏显示草稿视图(含 idle 状态)。
+  const viewingSession = sessionId !== null && !showComposer;
+
+  // 手机/平板:新建、打开历史会话后自动切回"对话"视图。
+  const handleNewChat = () => {
+    if (streaming) return;
+    newChat();
+    setMobileView("chat");
+  };
+  const handleToggle = (id: number) => {
+    if (streaming) return;
+    const opening = id !== sessionId;
+    toggleSession(id);
+    if (opening) setMobileView("chat");
+  };
+
+  // 面板可见性:手机按 mobileView,桌面(lg+)按 sideTab。
+  const panelCls = (k: SideTab) =>
+    `${mobileView === k ? "block" : "hidden"} ${sideTab === k ? "lg:block" : "lg:hidden"}`;
+
+  const mobileTabs: { key: MobileView; label: string }[] = [
+    { key: "chat", label: "对话" },
+    { key: "sessions", label: `历史 ${sessions.length}` },
+    { key: "notes", label: `笔记 ${notes.length}` },
+    { key: "plans", label: "计划" },
+  ];
+  const sideTabs: { key: SideTab; label: string }[] = [
+    { key: "sessions", label: `历史对话 ${sessions.length}` },
+    { key: "notes", label: `教练笔记 ${notes.length}` },
+    { key: "plans", label: "历史计划" },
+  ];
 
   return (
-    <div className="flex max-w-4xl flex-col">
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-xl font-bold">训练计划 · AI 教练</h2>
-        <button
-          onClick={newChat}
-          disabled={streaming}
-          className="flex items-center gap-1.5 rounded-lg border border-accent/30 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/20 disabled:opacity-40"
-        >
-          <MessageSquarePlus size={14} /> 新建对话
-        </button>
-      </div>
-
-      {/* 教练笔记:长期记忆层,Agent 对话中也会自动写入 */}
-      <details className="panel mb-4 p-4" open={notes.length > 0}>
-        <summary className="cursor-pointer text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">
-          Coach Notes · 教练笔记（{notes.length}）—— 每次对话都会带上
-        </summary>
-        <div className="mt-3 space-y-1.5">
-          {notes.length === 0 && (
-            <p className="text-xs text-zinc-600">
-              暂无。对话中告诉教练你的个人情况(伤病史/恢复规律/偏好),它会自动记下来;也可以在这里手动添加。
-            </p>
-          )}
-          {notes.map((n) => (
-            <div
-              key={n.id}
-              className="flex items-center justify-between gap-3 rounded border border-white/5 bg-white/[0.02] px-2.5 py-1.5"
-            >
-              <span className="flex min-w-0 items-center gap-2 text-sm text-zinc-300">
-                {n.pinned === 1 && (
-                  <span className="shrink-0 rounded bg-zone-red/10 px-1.5 py-0.5 text-[10px] text-zone-red">硬约束</span>
-                )}
-                <span className={isExpired(n.expires_at) ? "text-zinc-600 line-through" : ""}>{n.content}</span>
-                {n.expires_at && (
-                  <span className="shrink-0 text-[10px] text-zinc-600">
-                    {isExpired(n.expires_at) ? "已过期" : `至 ${n.expires_at}`}
-                  </span>
-                )}
-              </span>
-              <span className="flex shrink-0 items-center gap-2">
-                <span className="text-[10px] text-zinc-600">{n.created_at}</span>
-                <button
-                  onClick={() => togglePin(n)}
-                  className={n.pinned ? "text-zone-red" : "text-zinc-600 transition-colors hover:text-zinc-300"}
-                  aria-label={n.pinned ? "取消硬约束" : "置顶为硬约束"}
-                >
-                  <Pin size={13} />
-                </button>
-                <button
-                  onClick={() => deleteNote(n.id)}
-                  className="text-zinc-600 transition-colors hover:text-zone-red"
-                  aria-label="删除笔记"
-                >
-                  <Trash2 size={13} />
-                </button>
-              </span>
-            </div>
-          ))}
-          <div className="flex gap-2 pt-1">
-            <input
-              value={noteInput}
-              onChange={(e) => setNoteInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addNote()}
-              placeholder="手动添加一条,如:膝盖旧伤,避免深蹲"
-              className="flex-1 rounded border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none"
-            />
-            <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-xs text-zinc-500">
-              <input
-                type="checkbox"
-                checked={pinNew}
-                onChange={(e) => setPinNew(e.target.checked)}
-                className="accent-red-400"
-              />
-              硬约束
-            </label>
-            <button
-              onClick={addNote}
-              disabled={!noteInput.trim()}
-              className="flex items-center gap-1 rounded border border-accent/30 bg-accent/10 px-2.5 text-xs text-accent transition-colors hover:bg-accent/20 disabled:opacity-40"
-            >
-              <Plus size={13} /> 添加
-            </button>
-          </div>
-        </div>
-      </details>
-
-      {/* 历史计划:保留执行闭环,默认收起不占版面 */}
-      <details className="panel mb-4 p-4">
-        <summary className="cursor-pointer text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">
-          Plan History · 历史计划
-        </summary>
-        <div className="mt-3">
-          <PlanHistorySection />
-        </div>
-      </details>
-
-      {/* 对话区:当前对话独占一块面板(草稿或历史会话),其余收进下方折叠区 */}
-      <div className="space-y-2">
-        {/* 无会话时的引导卡:快捷起头 */}
-        {historyLoaded && sessions.length === 0 && (
-          <div className="panel animate-fade-up p-6 text-center">
-            <p className="mb-2 text-zinc-300">和你的 AI 教练对话</p>
-            <p className="mb-5 text-sm text-zinc-600">
-              它能读取你的恢复分、睡眠、训练状态和全部训练历史;生成后可以继续追问,让它按你的体感修正。
-            </p>
-            <div className="flex justify-center gap-3">
-              <button
-                onClick={() => send("请分析我今天的恢复情况,并给出今天训练的建议。")}
-                disabled={streaming}
-                className="flex items-center gap-2 rounded-lg border border-zone-green/30 bg-zone-green/10 px-4 py-2 text-sm font-medium text-zone-green transition-colors hover:bg-zone-green/20 disabled:opacity-50"
-              >
-                <HeartPulse size={15} /> 恢复分析
-              </button>
-              <button
-                onClick={() => send("请根据我的恢复情况和训练历史,生成下一次训练计划。")}
-                disabled={streaming}
-                className="flex items-center gap-2 rounded-lg bg-accent/90 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-50"
-              >
-                <ClipboardList size={15} /> 生成训练计划
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* 当前对话面板:新会话草稿,或从历史点开的会话;收起即回到纯列表 */}
-        {showComposer ? (
-          <div className="panel p-4">
-            <div className="mb-2 text-xs font-medium text-accent">新对话（未保存,发送后创建）</div>
-            {messages.length > 0 && <div className="mb-3 space-y-3">{renderMessages()}</div>}
-            {renderInput("输入第一条消息,开始新对话")}
-          </div>
-        ) : sessionId !== null ? (
-          <div className="panel p-4">
-            <div className="mb-3 flex items-center justify-between gap-3 border-b border-white/5 pb-2.5">
-              <span className="min-w-0 truncate text-sm font-medium text-zinc-200">
-                {activeSession?.title || "未命名对话"}
-              </span>
-              <button
-                onClick={closeConversation}
-                disabled={streaming}
-                className="shrink-0 rounded border border-white/10 px-2 py-0.5 text-[11px] text-zinc-400 transition-colors hover:text-zinc-200 disabled:opacity-40"
-              >
-                收起
-              </button>
-            </div>
-            <div className="space-y-3">{renderMessages()}</div>
-            <div className="mt-3">{renderInput("追问/修正,如:胸没恢复今天别排胸")}</div>
-          </div>
-        ) : null}
-
-        {/* 历史对话收纳:默认收起,点条目在上方面板就地展开 */}
-        <details className="panel p-4">
-          <summary className="cursor-pointer text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">
-            Chat History · 历史对话（{sessions.length}）
-          </summary>
-          <div className="mt-3 space-y-1.5">
-            {sessions.length === 0 && <p className="text-xs text-zinc-600">暂无历史对话</p>}
-            {sessions.map((s) => (
-              <div
-                key={s.id}
-                className={`flex items-center justify-between gap-3 rounded border px-2.5 py-1.5 transition-colors ${
-                  s.id === sessionId && !showComposer
-                    ? "border-accent/40 bg-accent/[0.06]"
-                    : "border-white/5 bg-white/[0.02]"
-                }`}
-              >
-                <button
-                  onClick={() => toggleSession(s.id)}
-                  disabled={streaming}
-                  title={s.id === sessionId && !showComposer ? "点击收起该对话" : "在上方展开该对话"}
-                  className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-sm text-zinc-200 transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {s.id === sessionId && !showComposer ? (
-                    <Check size={13} className="shrink-0 text-accent" />
-                  ) : null}
-                  <span className="truncate">{s.title || "未命名对话"}</span>
-                </button>
-                <span className="flex shrink-0 items-center gap-2">
-                  <span className="text-[10px] text-zinc-600">
-                    {sessionLabel(s)} · {s.message_count} 条
-                  </span>
-                  <button
-                    onClick={() => removeSession(s.id)}
-                    disabled={streaming}
-                    className="text-zinc-600 transition-colors hover:text-zone-red disabled:opacity-40"
-                    aria-label="删除该对话"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </span>
-              </div>
-            ))}
-          </div>
-        </details>
-      </div>
-    </div>
-  );
-
-  // —— 渲染片段:消息流 + 输入区(草稿卡与展开会话共用同一套 send/streaming 状态)——
-  function renderMessages() {
-    return (
-      <>
-        {messages.map((m, i) =>
-          m.role === "user" ? (
-            <div key={i} className="flex justify-end">
-              <div className="max-w-[80%] whitespace-pre-wrap rounded-lg rounded-br-sm border border-accent/25 bg-accent/10 px-3.5 py-2 text-sm text-zinc-100">
-                {m.content}
-              </div>
-            </div>
-          ) : (
-            <div key={i} className="panel animate-fade-up p-4">
-              <Markdown>{m.content || "…"}</Markdown>
-            </div>
-          )
-        )}
-        <div ref={bottomRef} />
-      </>
-    );
-  }
-
-  function renderInput(placeholder: string) {
-    return (
-      <div className="flex gap-2">
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && send(input)}
-          disabled={streaming}
-          placeholder={placeholder}
-          className="flex-1 rounded-lg border border-white/10 bg-white/[0.04] px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none disabled:opacity-50"
-        />
-        {streaming ? (
-          <button
-            onClick={() => abortRef.current?.abort()}
-            className="flex items-center gap-1.5 rounded-lg border border-zone-red/40 bg-zone-red/10 px-4 text-sm text-zone-red transition-colors hover:bg-zone-red/20"
-          >
-            <Square size={13} /> 停止
+    // lg 高度 = 100dvh − 顶栏 3.5rem − main pt-10(2.5rem) − main pb-16(4rem) − 1px 边;改 layout 内边距须同步
+    <div className="lg:flex lg:h-[calc(100dvh-10rem-1px)] lg:min-h-[34rem] lg:flex-col">
+      <PageHeader
+        title="训练计划"
+        description="和 AI 教练对话、存档计划，教练笔记会随每次对话带上"
+        actions={
+          <button onClick={handleNewChat} disabled={streaming} className="btn btn-primary">
+            <MessageSquarePlus size={15} /> 新建对话
           </button>
-        ) : (
-          <button
-            onClick={() => send(input)}
-            disabled={!input.trim()}
-            className="flex items-center gap-1.5 rounded-lg bg-accent/90 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-40"
-          >
-            <Send size={14} /> 发送
-          </button>
-        )}
+        }
+      />
+
+      {/* 手机/平板:吸顶视图切换 */}
+      <div className="sticky top-[calc(3rem+env(safe-area-inset-top))] z-20 -mx-4 mb-4 bg-bg/95 px-4 backdrop-blur md:top-14 md:-mx-6 md:px-6 lg:hidden">
+        <SegmentedTabs idBase="plan-m" tabs={mobileTabs} value={mobileView} onChange={setMobileView} />
       </div>
-    );
-  }
-}
 
-function PlanHistorySection() {
-  const [
-    plans,
-    setPlans,
-  ] = useState<
-    {
-      id: number;
-      date: string;
-      plan_date: string | null;
-      analysis_summary: string;
-      recovery_assessment: string;
-      exercises: string;
-      advice: string;
-    }[]
-  >([]);
-  const [deletingId, setDeletingId] = useState<number | null>(null);
-
-  // 手动录入自己的训练计划(动作行可增删),保存后走与 AI 计划相同的"执行"闭环。
-  const [showForm, setShowForm] = useState(false);
-  const [planDate, setPlanDate] = useState(new Date().toISOString().split("T")[0]);
-  const [targetDate, setTargetDate] = useState("");
-  const [rows, setRows] = useState([
-    { name: "", muscle_group: "", sets: "", reps: "", weight: "" },
-  ]);
-  const [advice, setAdvice] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState("");
-
-  const load = useCallback(() => {
-    fetch("/api/plans")
-      .then((r) => r.json())
-      .then((d) => setPlans(d.plans ?? []))
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const resetForm = () => {
-    setPlanDate(new Date().toISOString().split("T")[0]);
-    setTargetDate("");
-    setRows([{ name: "", muscle_group: "", sets: "", reps: "", weight: "" }]);
-    setAdvice("");
-    setFormError("");
-  };
-
-  const savePlan = async () => {
-    setFormError("");
-    const exercises = rows
-      .map((r) => ({
-        name: r.name.trim(),
-        muscle_group: r.muscle_group.trim(),
-        sets: r.sets ? parseInt(r.sets) : NaN,
-        reps: r.reps ? parseInt(r.reps) : NaN,
-        weight: r.weight ? parseFloat(r.weight) : null,
-      }))
-      .filter((r) => r.name || r.muscle_group);
-    if (exercises.length === 0) {
-      setFormError("至少填一个动作");
-      return;
-    }
-    setSaving(true);
-    try {
-      const res = await fetch("/api/plans", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          date: planDate,
-          ...(targetDate ? { plan_date: targetDate } : {}),
-          exercises,
-          advice: advice || undefined,
-        }),
-      });
-      const json = (await res.json()) as { error?: string };
-      if (!res.ok) {
-        setFormError(json.error ?? "保存失败");
-        return;
-      }
-      resetForm();
-      setShowForm(false);
-      load();
-    } catch {
-      setFormError("网络错误,未保存");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const removePlan = async (id: number) => {
-    if (!window.confirm("删除这条历史计划?不可恢复。")) return;
-    setDeletingId(id);
-    try {
-      await fetch(`/api/plans?id=${id}`, { method: "DELETE" });
-      setPlans((prev) => prev.filter((p) => p.id !== id));
-    } finally {
-      setDeletingId(null);
-    }
-  };
-
-  if (plans.length === 0 && !showForm) return <p className="text-sm text-zinc-600">暂无训练计划</p>;
-
-  return (
-    <div className="space-y-3">
-      {/* 手动录入自己的计划:与 AI 计划同列表、同执行闭环 */}
-      <div className="flex justify-end">
-        <button
-          onClick={() => setShowForm((v) => !v)}
-          className="flex items-center gap-1.5 rounded-lg border border-accent/30 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/20"
+      <div className="lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-12 lg:grid-rows-[minmax(0,1fr)]">
+        <section
+          {...tabPanelProps("plan-m", "chat")}
+          className={`${mobileView === "chat" ? "flex" : "hidden"} min-w-0 flex-col lg:col-span-8 lg:flex lg:min-h-0 lg:pr-8`}
         >
-          {showForm ? "收起表单" : "新建计划"}
-        </button>
-      </div>
-
-      {showForm && (
-        <div className="rounded-lg border border-accent/30 bg-accent/[0.04] p-3">
-          <div className="flex flex-wrap items-center gap-3 text-xs">
-            <label className="flex items-center gap-1.5 text-zinc-400">
-              计划日期
-              <input
-                type="date"
-                value={planDate}
-                onChange={(e) => setPlanDate(e.target.value)}
-                className="rounded border border-white/10 bg-white/[0.04] px-2 py-1 text-sm text-zinc-100 [color-scheme:dark]"
-              />
-            </label>
-            <label className="flex items-center gap-1.5 text-zinc-400">
-              目标日期(可选)
-              <input
-                type="date"
-                value={targetDate}
-                onChange={(e) => setTargetDate(e.target.value)}
-                className="rounded border border-white/10 bg-white/[0.04] px-2 py-1 text-sm text-zinc-100 [color-scheme:dark]"
-              />
-            </label>
-          </div>
-
-          <div className="mt-3 space-y-1.5">
-            <div className="flex gap-1.5 text-[10px] uppercase tracking-wider text-zinc-600">
-              <span className="min-w-0 flex-1">动作</span>
-              <span className="w-16 shrink-0">肌群</span>
-              <span className="w-12 shrink-0">组</span>
-              <span className="w-12 shrink-0">次</span>
-              <span className="w-16 shrink-0">kg</span>
-              <span className="w-5 shrink-0" />
-            </div>
-            {rows.map((r, i) => (
-              <div key={i} className="flex gap-1.5">
-                <input
-                  value={r.name}
-                  onChange={(e) =>
-                    setRows((rs) => rs.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))
-                  }
-                  placeholder="如 杠铃卧推"
-                  className="min-w-0 flex-1 rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none"
-                />
-                <input
-                  value={r.muscle_group}
-                  onChange={(e) =>
-                    setRows((rs) => rs.map((x, j) => (j === i ? { ...x, muscle_group: e.target.value } : x)))
-                  }
-                  placeholder="胸"
-                  className="w-16 shrink-0 rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none"
-                />
-                <input
-                  value={r.sets}
-                  onChange={(e) =>
-                    setRows((rs) => rs.map((x, j) => (j === i ? { ...x, sets: e.target.value } : x)))
-                  }
-                  inputMode="numeric"
-                  placeholder="4"
-                  className="w-12 shrink-0 rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-center text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none"
-                />
-                <input
-                  value={r.reps}
-                  onChange={(e) =>
-                    setRows((rs) => rs.map((x, j) => (j === i ? { ...x, reps: e.target.value } : x)))
-                  }
-                  inputMode="numeric"
-                  placeholder="8"
-                  className="w-12 shrink-0 rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-center text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none"
-                />
-                <input
-                  value={r.weight}
-                  onChange={(e) =>
-                    setRows((rs) => rs.map((x, j) => (j === i ? { ...x, weight: e.target.value } : x)))
-                  }
-                  inputMode="decimal"
-                  placeholder="自重"
-                  className="w-16 shrink-0 rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-center text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none"
-                />
-                <button
-                  onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}
-                  className="w-5 shrink-0 text-zinc-600 transition-colors hover:text-zone-red"
-                  aria-label="移除该动作"
-                >
-                  <Trash2 size={13} />
-                </button>
-              </div>
-            ))}
-            <button
-              onClick={() => setRows((rs) => [...rs, { name: "", muscle_group: "", sets: "", reps: "", weight: "" }])}
-              className="flex items-center gap-1 text-xs text-accent transition-colors hover:text-accent/80"
-            >
-              <Plus size={12} /> 添加动作
-            </button>
-          </div>
-
-          <textarea
-            value={advice}
-            onChange={(e) => setAdvice(e.target.value)}
-            placeholder="注意事项(可选),如:组间休息 90 秒,最后一路做到力竭"
-            rows={2}
-            className="mt-3 w-full rounded border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none"
+          <ChatPanel
+            viewing={viewingSession}
+            title={activeSession?.title || "未命名对话"}
+            streaming={streaming}
+            messages={messages}
+            bottomRef={bottomRef}
+            input={input}
+            onInputChange={setInput}
+            onSend={send}
+            onStop={() => abortRef.current?.abort()}
+            onClose={closeConversation}
           />
+        </section>
 
-          {formError && <p className="mt-2 text-xs text-zone-red">{formError}</p>}
-          <div className="mt-3 flex items-center gap-3">
-            <button
-              onClick={savePlan}
-              disabled={saving}
-              className="rounded-lg bg-accent/90 px-4 py-1.5 text-xs font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-40"
-            >
-              {saving ? "保存中..." : "保存计划"}
-            </button>
-            <span className="text-[11px] text-zinc-600">保存后出现在列表里,可点「执行」带入训记,自动闭环</span>
+        <aside
+          aria-label="对话上下文"
+          className={`${mobileView === "chat" ? "hidden" : "block"} min-w-0 lg:col-span-4 lg:flex lg:min-h-0 lg:flex-col lg:border-l lg:border-line lg:pl-8`}
+        >
+          <div className="hidden shrink-0 lg:block">
+            <SegmentedTabs idBase="plan-side" tabs={sideTabs} value={sideTab} onChange={setSideTab} />
           </div>
-        </div>
-      )}
-
-      {plans.map((plan) => {
-        let exercises: { name: string; muscle_group: string; sets: number; reps: number; weight: number }[] = [];
-        try {
-          exercises = JSON.parse(plan.exercises || "[]");
-        } catch {}
-        const execPlanHref = `/input?plan=${encodeURIComponent(plan.exercises || "[]")}&planId=${plan.id}`;
-        return (
-          <details key={plan.id} className="rounded-lg border border-white/5 bg-white/[0.02] p-3">
-            <summary className="flex cursor-pointer items-center justify-between gap-3 text-sm">
-              <span className="min-w-0 truncate font-medium text-zinc-200">
-                {plan.date}
-                {plan.plan_date && <span className="ml-2 text-xs text-zinc-500">目标: {plan.plan_date}</span>}
-                {!plan.recovery_assessment && !plan.analysis_summary && (
-                  <span className="ml-2 rounded border border-white/15 bg-white/5 px-1.5 py-0.5 text-[10px] text-zinc-400">自建</span>
-                )}
-              </span>
-              <span className="flex items-center gap-2">
-                <span className="text-xs text-zinc-500">{exercises.length} 个动作</span>
-                <button
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    removePlan(plan.id);
-                  }}
-                  disabled={deletingId === plan.id}
-                  className="text-zinc-600 transition-colors hover:text-zone-red disabled:opacity-40"
-                  aria-label="删除该计划"
-                  title="删除该计划"
-                >
-                  <Trash2 size={13} />
-                </button>
-              </span>
-            </summary>
-            <div className="mt-3 space-y-3">
-              {plan.analysis_summary && (
-                <div className="border-l-2 border-accent/70 pl-3">
-                  <div className="mb-1 text-xs text-zinc-500">分析摘要</div>
-                  <div className="text-sm text-zinc-300">{plan.analysis_summary}</div>
-                </div>
-              )}
-              {plan.recovery_assessment && (
-                <div className="border-l-2 border-zone-amber/70 pl-3">
-                  <div className="mb-1 text-xs text-zinc-500">恢复评估</div>
-                  <div className="text-sm text-zinc-300">{plan.recovery_assessment}</div>
-                </div>
-              )}
-              {exercises.length > 0 && (
-                <div>
-                  <div className="mb-2 flex items-center justify-between">
-                    <div className="text-xs text-zinc-500">训练动作</div>
-                    <a
-                      href={execPlanHref}
-                      className="rounded border border-accent/30 bg-accent/10 px-3 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/20"
-                    >
-                      执行
-                    </a>
-                  </div>
-                  <div className="space-y-2">
-                    {exercises.map((ex, i) => (
-                      <div key={i} className="rounded-lg border border-white/5 bg-white/[0.02] p-2">
-                        <div className="text-sm text-zinc-200">
-                          <span className="mr-2 text-xs text-zinc-500">[{ex.muscle_group}]</span>
-                          <span className="font-medium">{ex.name}</span>
-                          <span className="ml-2 text-xs text-zinc-500">{ex.sets}组</span>
-                        </div>
-                        <div className="ml-1 mt-0.5 text-xs text-zinc-400">
-                          {ex.sets}组 × {ex.reps}次
-                          {ex.weight ? ` @ ${ex.weight}kg` : " 自重"}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {plan.advice && (
-                <div className="border-l-2 border-zone-green/70 pl-3">
-                  <div className="mb-1 text-xs text-zinc-500">建议</div>
-                  <div className="text-sm text-zinc-300">{plan.advice}</div>
-                </div>
-              )}
+          <div className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:pr-1">
+            {/* 外层手机 tab 面板,内层桌面 tab 面板:两组 tablist 的 aria-controls 都能对上 */}
+            <div {...tabPanelProps("plan-m", "sessions")} className={panelCls("sessions")}>
+              <div id="plan-side-panel-sessions" role="tabpanel" aria-labelledby="plan-side-tab-sessions">
+                <SessionList
+                  sessions={sessions}
+                  activeId={showComposer ? null : sessionId}
+                  streaming={streaming}
+                  onToggle={handleToggle}
+                  onRemove={removeSession}
+                />
+              </div>
             </div>
-          </details>
-        );
-      })}
+            <div {...tabPanelProps("plan-m", "notes")} className={panelCls("notes")}>
+              <div id="plan-side-panel-notes" role="tabpanel" aria-labelledby="plan-side-tab-notes">
+                <CoachNotes notes={notes} onChanged={fetchNotes} />
+              </div>
+            </div>
+            <div {...tabPanelProps("plan-m", "plans")} className={panelCls("plans")}>
+              <div id="plan-side-panel-plans" role="tabpanel" aria-labelledby="plan-side-tab-plans">
+                <PlanArchive />
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
     </div>
   );
 }

@@ -5,14 +5,13 @@ import type { RecoveryScore } from "@/lib/recovery";
 import type { Readiness } from "@/lib/readiness";
 import type { TrainingStatus } from "@/lib/training-status";
 import { ACWR_ZONE_META, RECOVERY_ZONE_META, READY_ZONE_META } from "@/lib/zone-meta";
-import { Card, CardTitle } from "./ui/Card";
 
 function EvidenceRow({ color, label, text }: { color: string; label: string; text: string }) {
   return (
-    <div className="flex items-baseline gap-2 text-[11px] leading-relaxed">
+    <div className="flex items-baseline gap-2 text-sm leading-relaxed">
       <span className="h-1.5 w-1.5 shrink-0 translate-y-[-1px] rounded-full" style={{ background: color }} />
-      <span className="shrink-0 text-zinc-500">{label}</span>
-      <span className="min-w-0 text-zinc-400">{text}</span>
+      <span className="w-8 shrink-0 text-xs text-ink-3">{label}</span>
+      <span className="min-w-0 text-ink-2">{text}</span>
     </div>
   );
 }
@@ -34,10 +33,10 @@ const STATUS_LABEL: Record<AdviceView["status"], string> = {
   skipped: "未采纳",
 };
 const STATUS_COLOR: Record<AdviceView["status"], string> = {
-  pending: "text-zinc-500",
+  pending: "text-ink-3",
   followed: "text-zone-green",
   partial: "text-zone-amber",
-  skipped: "text-zinc-400",
+  skipped: "text-ink-2",
 };
 
 // 今日建议卡:恢复(扛不扛得住) × 负荷(练没练多) 合成的一条行动结论。
@@ -59,30 +58,27 @@ export default function ReadinessCard({
   onAdviceUpdate?: (a: AdviceView) => void;
 }) {
   const zone = READY_ZONE_META[readiness.level];
-  const recDot = recovery.score !== null && recovery.zone ? RECOVERY_ZONE_META[recovery.zone].hex : "#52525b";
-  const loadDot = status.acwr.zone ? ACWR_ZONE_META[status.acwr.zone].hex : "#52525b";
+  const recDot = recovery.score !== null && recovery.zone ? RECOVERY_ZONE_META[recovery.zone].hex : "#5c5852";
+  const loadDot = status.acwr.zone ? ACWR_ZONE_META[status.acwr.zone].hex : "#5c5852";
 
   return (
-    <Card glowColor={zone.hex} className="animate-fade-up p-5">
-      <CardTitle
-        right={
-          <span className={`rounded border px-2 py-0.5 font-mono text-[10px] ${zone.border} ${zone.bg} ${zone.text}`}>
-            {zone.label}
-          </span>
-        }
-      >
-        Today · 今日建议
-      </CardTitle>
+    <div className="animate-fade-up">
+      <p className="flex items-center gap-2 text-xs text-ink-3">
+        <span className="font-mono">01</span>今日建议
+        {today && <span className="font-mono">· {today.slice(5)}</span>}
+      </p>
 
-      <div className="mt-3 flex flex-wrap items-end justify-between gap-x-6 gap-y-1">
-        <span className={`text-3xl font-bold tracking-wide ${zone.text}`}>{readiness.headline}</span>
-        <p className="min-w-0 max-w-[28rem] flex-1 text-right text-sm leading-relaxed text-zinc-400">
-          {readiness.detail}
-        </p>
-      </div>
+      <p className={`mt-5 flex items-center gap-2 text-sm font-medium ${zone.text}`}>
+        <span className="h-2 w-2 rounded-full" style={{ background: zone.hex }} />
+        {zone.label}
+      </p>
+      <h2 className="mt-2 text-[30px] font-semibold leading-[1.15] tracking-tight text-ink md:text-[44px]">
+        {readiness.headline}
+      </h2>
+      <p className="mt-4 max-w-[46ch] text-base leading-relaxed text-ink-2">{readiness.detail}</p>
 
       {(readiness.recoveryPart || readiness.loadPart) && (
-        <div className="mt-3 space-y-1.5 border-t border-white/5 pt-3">
+        <div className="mt-6 grid gap-2 border-t border-line pt-4">
           {readiness.recoveryPart && <EvidenceRow color={recDot} label="恢复" text={readiness.recoveryPart} />}
           {readiness.loadPart && <EvidenceRow color={loadDot} label="负荷" text={readiness.loadPart} />}
         </div>
@@ -90,10 +86,15 @@ export default function ReadinessCard({
 
       {advice && <AdviceFeedback key={advice.id} advice={advice} today={today} onUpdate={onAdviceUpdate} />}
 
-      <p className="mt-2 text-[10px] text-zinc-600">
+      {status.todayLoad > 0 && (
+        <p className="mt-4 text-xs text-ink-3">
+          今日已练 {status.todayLoad} AU · 建议按练前状态给出，当天不变；今天的负荷明早计入
+        </p>
+      )}
+      <p className="mt-4 text-xs text-ink-3">
         恢复决定今天练多重，负荷决定今天练不练 · 当下体感与它冲突时，以体感为准
       </p>
-    </Card>
+    </div>
   );
 }
 
@@ -154,16 +155,16 @@ function AdviceFeedback({
   };
 
   return (
-    <div className="mt-3 border-t border-white/5 pt-3">
+    <div className="mt-6 rounded-md border border-line bg-surface p-4">
       {dayLabel && (
-        <p className="mb-1.5 text-xs text-zinc-300">
-          <span className="text-zinc-500">{dayLabel}的建议</span> · {advice.headline}
+        <p className="mb-2 text-sm text-ink">
+          <span className="text-ink-3">{dayLabel}的建议</span> · {advice.headline}
         </p>
       )}
       <div className="flex items-center justify-between gap-3">
-        <span className="text-[11px] text-zinc-500">{question}</span>
+        <span className="text-xs text-ink-3">{question}</span>
         {resolved && (
-          <span className={`text-[11px] ${STATUS_COLOR[advice.status]}`}>
+          <span className={`text-xs ${STATUS_COLOR[advice.status]}`}>
             {STATUS_LABEL[advice.status]}
             {advice.felt_rpe ? ` · 体感 ${advice.felt_rpe}/10` : ""}
           </span>
@@ -173,13 +174,13 @@ function AdviceFeedback({
       {resolved ? (
         <div className="mt-1.5 flex items-center justify-between gap-3">
           {advice.body_notes ? (
-            <p className="min-w-0 truncate text-xs text-zinc-400">“{advice.body_notes}”</p>
+            <p className="min-w-0 truncate text-sm text-ink-2">“{advice.body_notes}”</p>
           ) : (
-            <span className="text-xs text-zinc-600">未填体感</span>
+            <span className="text-xs text-ink-3">未填体感</span>
           )}
           <button
             onClick={() => setEditing(true)}
-            className="shrink-0 text-[11px] text-zinc-500 transition-colors hover:text-zinc-200"
+            className="btn btn-ghost btn-sm shrink-0"
           >
             修改
           </button>
@@ -191,11 +192,8 @@ function AdviceFeedback({
               <button
                 key={s}
                 onClick={() => pick(s)}
-                className={`rounded-lg border px-3 py-1 text-xs transition-colors ${
-                  picked === s
-                    ? "border-accent/50 bg-accent/15 text-accent"
-                    : "border-white/10 text-zinc-400 hover:border-white/25 hover:text-zinc-200"
-                }`}
+                aria-pressed={picked === s}
+                className="chip"
               >
                 {STATUS_LABEL[s]}
               </button>
@@ -209,26 +207,26 @@ function AdviceFeedback({
               value={rpe}
               onChange={(e) => setRpe(e.target.value)}
               placeholder="体感 1-10"
-              className="w-24 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none"
+              className="field w-28"
             />
             <input
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && picked !== "pending" && submit()}
               placeholder="一句话感受（可选），如：降档后反而有劲"
-              className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-600 focus:border-accent/50 focus:outline-none"
+              className="field min-w-0 flex-1 basis-56"
             />
             <button
               onClick={submit}
               disabled={picked === "pending" || saving}
-              className="rounded-lg bg-accent/90 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-40"
+              className="btn btn-primary btn-sm w-full sm:w-auto"
             >
               {saving ? "保存中" : "记录"}
             </button>
             {advice.status !== "pending" && (
               <button
                 onClick={() => setEditing(false)}
-                className="text-[11px] text-zinc-600 transition-colors hover:text-zinc-300"
+                className="btn btn-ghost btn-sm"
               >
                 取消
               </button>

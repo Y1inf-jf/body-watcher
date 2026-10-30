@@ -4,6 +4,9 @@ import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import HealthForm from "@/components/HealthForm";
 import TrainingForm from "@/components/TrainingForm";
+import PageHeader from "@/components/ui/PageHeader";
+import Section from "@/components/ui/Section";
+import Notice from "@/components/ui/Notice";
 
 function InputContent() {
   const searchParams = useSearchParams();
@@ -19,27 +22,28 @@ function InputContent() {
   const planKey = planParam ? planParam.length : 0;
 
   return (
-    <div className="max-w-4xl space-y-8">
+    <div className="mx-auto max-w-4xl">
+      <PageHeader title="手动录入" description="计划执行预填与补录入口" />
       {planParam && (
-        <div className="bg-blue-950/40 border border-blue-800/50 rounded-lg p-3 text-sm text-blue-200">
+        <Notice tone="info" className="mb-8">
           已从训练计划预填动作，请根据实际训练情况调整组数、重量、次数后保存。
-        </div>
+        </Notice>
       )}
-      <section>
-        <h2 className="text-lg font-semibold mb-3">每日健康指标</h2>
+      <Section index="01" title="每日健康指标">
         <HealthForm />
-      </section>
-      <section>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-semibold">
-            {editId ? `编辑训练记录 #${editId}` : "训练记录"}
-          </h2>
-          {(editId || dateParam || planParam) && (
-            <a href="/input" className="text-zinc-400 hover:text-zinc-200 text-sm">
+      </Section>
+      <Section
+        index="02"
+        title={editId ? `编辑训练记录 #${editId}` : "训练记录"}
+        className="mt-10"
+        aside={
+          (editId || dateParam || planParam) && (
+            <a href="/input" className="text-sm text-accent underline-offset-4 hover:underline">
               新建记录
             </a>
-          )}
-        </div>
+          )
+        }
+      >
         <TrainingForm
           editId={editId ? parseInt(editId) : null}
           initialDate={dateParam || undefined}
@@ -47,14 +51,14 @@ function InputContent() {
           templateKey={planKey}
           planId={Number.isInteger(planId) && planId > 0 ? planId : null}
         />
-      </section>
+      </Section>
     </div>
   );
 }
 
 export default function InputPage() {
   return (
-    <Suspense fallback={<div className="text-zinc-500">加载中...</div>}>
+    <Suspense fallback={<div className="text-ink-3">加载中...</div>}>
       <InputContent />
     </Suspense>
   );

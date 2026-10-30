@@ -61,23 +61,23 @@ export default function PlanCard({ log, onDeleted, onEdit }: { log: TrainingLog;
   };
 
   return (
-    <div className="panel animate-fade-up p-4 group">
-      <div className="flex items-center justify-between mb-3">
-        <span className="font-medium">{log.date}</span>
-        <div className="flex gap-3 items-center">
-          {log.total_volume ? <span className="text-xs text-zinc-400">总容量 {log.total_volume.toFixed(0)} kg</span> : null}
-          {log.rpe ? <span className="text-xs text-zinc-400">整体 RPE {log.rpe}</span> : null}
-          {log.duration ? <span className="text-xs text-zinc-400">{log.duration} min</span> : null}
-          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+    <article className="animate-fade-up group py-4">
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+        <span className="font-mono text-sm text-ink">{log.date}</span>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          {log.total_volume ? <span className="text-xs text-ink-3">总容量 {log.total_volume.toFixed(0)} kg</span> : null}
+          {log.rpe ? <span className="text-xs text-ink-3">整体 RPE {log.rpe}</span> : null}
+          {log.duration ? <span className="text-xs text-ink-3">{log.duration} min</span> : null}
+          <div className="flex gap-1 opacity-100 transition-opacity md:opacity-0 md:focus-within:opacity-100 md:group-hover:opacity-100">
             {onEdit && (
-              <button onClick={() => onEdit(log.id)} className="text-xs text-zinc-500 hover:text-accent px-1">
+              <button onClick={() => onEdit(log.id)} className="btn btn-ghost btn-sm">
                 编辑
               </button>
             )}
             <button
               onClick={handleDelete}
               onBlur={() => setConfirmDelete(false)}
-              className={`text-xs px-1 ${confirmDelete ? "text-zone-red" : "text-zinc-500 hover:text-zone-red"}`}
+              className={`btn btn-ghost btn-sm ${confirmDelete ? "text-zone-red" : "hover:text-zone-red"}`}
             >
               {confirmDelete ? "确认?" : "删除"}
             </button>
@@ -89,13 +89,12 @@ export default function PlanCard({ log, onDeleted, onEdit }: { log: TrainingLog;
       </div>
       <div className="space-y-2">
         {blocks.map((block, i) => (
-          <div key={i} className="rounded-lg border border-white/5 bg-white/[0.02] p-2">
-            <div className="text-sm text-zinc-200 mb-1">
-              <span className="text-zinc-500 text-xs mr-2">[{block.muscle_group}]</span>
+          <div key={i}>
+            <div className="text-sm text-ink">
               {block.name}
-              <span className="text-zinc-500 ml-1">{block.sets.length}组</span>
+              <span className="ml-2 text-xs text-ink-3">[{block.muscle_group}] {block.sets.length}组</span>
             </div>
-            <div className="flex flex-wrap gap-x-4 gap-y-0.5 ml-2 text-xs text-zinc-400">
+            <div className="mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5 font-mono text-xs text-ink-2">
               {block.sets.map((s, j) => (
                 <span key={j}>
                   {j + 1}. {s.reps || "?"}次
@@ -107,6 +106,6 @@ export default function PlanCard({ log, onDeleted, onEdit }: { log: TrainingLog;
           </div>
         ))}
       </div>
-    </div>
+    </article>
   );
 }

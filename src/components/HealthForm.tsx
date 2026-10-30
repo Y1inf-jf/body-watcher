@@ -100,44 +100,44 @@ export default function HealthForm() {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
         <input
           type="date"
           value={data.date}
           onChange={(e) => setData({ ...data, date: e.target.value })}
-          className="bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm"
+          className="field"
         />
         <button
           type="submit"
           disabled={saving}
-          className="rounded-lg bg-accent/90 px-4 py-1.5 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-50"
+          className="btn btn-primary"
         >
           {saving ? "保存中..." : "保存"}
         </button>
         {message && <span className="text-sm text-zone-green">{message}</span>}
       </div>
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {fields.map(({ key, label, placeholder }) => (
           <div key={key}>
-            <label className="block text-xs text-zinc-400 mb-1">{label}</label>
+            <label className="mb-1 block text-xs text-ink-3">{label}</label>
             <input
               type="number"
               step="any"
               placeholder={placeholder}
               value={data[key]}
               onChange={(e) => setData({ ...data, [key]: e.target.value })}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm"
+              className="field w-full"
             />
           </div>
         ))}
       </div>
       <div>
-        <label className="block text-xs text-zinc-400 mb-1">备注</label>
+        <label className="mb-1 block text-xs text-ink-3">备注</label>
         <input
           type="text"
           value={data.notes}
           onChange={(e) => setData({ ...data, notes: e.target.value })}
-          className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm"
+          className="field w-full"
           placeholder="今天状态如何..."
         />
       </div>

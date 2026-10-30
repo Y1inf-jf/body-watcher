@@ -1,15 +1,15 @@
 "use client";
 
 import {
-  AreaChart,
-  Area,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { Card, CardTitle } from "./ui/Card";
+import { CHART } from "./ui/chart-theme";
 
 interface DataPoint {
   date: string;
@@ -26,64 +26,66 @@ interface TrendChartProps {
   title: string;
   data: DataPoint[];
   series: Series[];
+  unit?: string;
 }
 
-// 通用趋势图:渐变面积曲线,配色与仪表盘状态色统一。
-export default function TrendChart({ title, data, series }: TrendChartProps) {
+// 通用趋势图:细线折线,头部显示首个系列的最新值。
+export default function TrendChart({ title, data, series, unit }: TrendChartProps) {
+  // 首个系列最新的非空值
+  const first = series[0]?.dataKey;
+  let latest: string | number | null = null;
+  if (first) {
+    for (let i = data.length - 1; i >= 0; i--) {
+      const v = data[i][first];
+      if (v !== null && v !== undefined) {
+        latest = v;
+        break;
+      }
+    }
+  }
+
   return (
-    <Card className="animate-fade-up p-4">
-      <CardTitle className="mb-3">{title}</CardTitle>
+    <figure className="min-w-0 animate-fade-up">
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <figcaption className="text-sm text-ink">{title}</figcaption>
+        {latest !== null && (
+          <span className="font-mono text-xl tabular-nums text-ink">
+            {latest}
+            {unit && <span className="ml-1 text-xs text-ink-3">{unit}</span>}
+          </span>
+        )}
+      </div>
       {!data.length ? (
-        <p className="text-sm text-zinc-600">暂无数据</p>
+        <p className="text-sm text-ink-3">暂无数据</p>
       ) : (
-        <ResponsiveContainer width="100%" height={200}>
-          <AreaChart data={data}>
-            <defs>
-              {series.map((s) => (
-                <linearGradient key={s.dataKey} id={`grad-${s.dataKey}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={s.color} stopOpacity={0.32} />
-                  <stop offset="100%" stopColor={s.color} stopOpacity={0} />
-                </linearGradient>
-              ))}
-            </defs>
-            <CartesianGrid strokeDasharray="3 6" stroke="rgba(255,255,255,0.06)" vertical={false} />
+        <ResponsiveContainer width="100%" height={180}>
+          <LineChart data={data}>
+            <CartesianGrid stroke={CHART.grid} vertical={false} />
             <XAxis
               dataKey="date"
-              tick={{ fontSize: 10, fill: "#71717a" }}
+              tickFormatter={(d) => String(d).slice(5)}
+              minTickGap={24}
+              tick={CHART.tick}
               axisLine={false}
               tickLine={false}
             />
-            <YAxis
-              tick={{ fontSize: 10, fill: "#71717a" }}
-              width={40}
-              axisLine={false}
-              tickLine={false}
-            />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: "#101014",
-                border: "1px solid rgba(255,255,255,0.1)",
-                borderRadius: 8,
-                fontSize: 12,
-              }}
-              cursor={{ stroke: "rgba(255,255,255,0.15)" }}
-            />
+            <YAxis tick={CHART.tick} width={32} axisLine={false} tickLine={false} domain={["auto", "auto"]} />
+            <Tooltip {...CHART.tooltip} />
             {series.map((s) => (
-              <Area
+              <Line
                 key={s.dataKey}
                 type="monotone"
                 dataKey={s.dataKey}
                 stroke={s.color}
-                fill={`url(#grad-${s.dataKey})`}
                 name={s.name}
-                strokeWidth={2}
+                strokeWidth={1.5}
                 dot={false}
                 connectNulls
               />
             ))}
-          </AreaChart>
+          </LineChart>
         </ResponsiveContainer>
       )}
-    </Card>
+    </figure>
   );
 }

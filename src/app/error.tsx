@@ -17,14 +17,11 @@ export default function ErrorPage({
 
   return (
     <div className="max-w-2xl mx-auto py-16 text-center">
-      <h2 className="text-lg font-bold text-zinc-200 mb-2">页面出错了</h2>
-      <p className="text-zinc-500 text-sm mb-6">
+      <h2 className="text-lg font-semibold text-ink mb-2">页面出错了</h2>
+      <p className="text-ink-3 text-sm mb-6">
         {error.message || "发生未知错误"}
       </p>
-      <button
-        onClick={() => unstable_retry()}
-        className="rounded-lg bg-accent/90 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent"
-      >
+      <button onClick={() => unstable_retry()} className="btn btn-primary">
         重试
       </button>
     </div>

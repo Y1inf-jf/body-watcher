@@ -11,7 +11,7 @@ export interface ZoneMeta {
   text: string; // tailwind 文字色类
   border: string;
   bg: string;
-  hex: string; // SVG 描边/发光用
+  hex: string; // 色点/刻度条内联样式用
 }
 
 export const RECOVERY_ZONE_META: Record<RecoveryZone, ZoneMeta> = {
@@ -21,7 +21,7 @@ export const RECOVERY_ZONE_META: Record<RecoveryZone, ZoneMeta> = {
     text: "text-zone-red",
     border: "border-zone-red/40",
     bg: "bg-zone-red/10",
-    hex: "#ff5c5c",
+    hex: "#e8735f",
   },
   yellow: {
     label: "恢复一般",
@@ -29,7 +29,7 @@ export const RECOVERY_ZONE_META: Record<RecoveryZone, ZoneMeta> = {
     text: "text-zone-amber",
     border: "border-zone-amber/40",
     bg: "bg-zone-amber/10",
-    hex: "#ffb224",
+    hex: "#e2aa52",
   },
   green: {
     label: "恢复良好",
@@ -37,7 +37,7 @@ export const RECOVERY_ZONE_META: Record<RecoveryZone, ZoneMeta> = {
     text: "text-zone-green",
     border: "border-zone-green/40",
     bg: "bg-zone-green/10",
-    hex: "#00e08c",
+    hex: "#7cc59b",
   },
 };
 
@@ -48,7 +48,7 @@ export const ACWR_ZONE_META: Record<AcwrZone, ZoneMeta> = {
     text: "text-accent",
     border: "border-accent/40",
     bg: "bg-accent/10",
-    hex: "#22d3ee",
+    hex: "#8fa9c9",
   },
   optimal: {
     label: "最优区间",
@@ -56,7 +56,7 @@ export const ACWR_ZONE_META: Record<AcwrZone, ZoneMeta> = {
     text: "text-zone-green",
     border: "border-zone-green/40",
     bg: "bg-zone-green/10",
-    hex: "#00e08c",
+    hex: "#7cc59b",
   },
   high: {
     label: "负荷偏高",
@@ -64,7 +64,7 @@ export const ACWR_ZONE_META: Record<AcwrZone, ZoneMeta> = {
     text: "text-zone-amber",
     border: "border-zone-amber/40",
     bg: "bg-zone-amber/10",
-    hex: "#ffb224",
+    hex: "#e2aa52",
   },
   risk: {
     label: "急性峰值",
@@ -72,7 +72,7 @@ export const ACWR_ZONE_META: Record<AcwrZone, ZoneMeta> = {
     text: "text-zone-red",
     border: "border-zone-red/40",
     bg: "bg-zone-red/10",
-    hex: "#ff5c5c",
+    hex: "#e8735f",
   },
 };
 
@@ -83,7 +83,7 @@ export const FORM_ZONE_META: Record<FormZone, ZoneMeta> = {
     text: "text-zone-green",
     border: "border-zone-green/40",
     bg: "bg-zone-green/10",
-    hex: "#00e08c",
+    hex: "#7cc59b",
   },
   neutral: {
     label: "平衡",
@@ -91,7 +91,7 @@ export const FORM_ZONE_META: Record<FormZone, ZoneMeta> = {
     text: "text-zone-amber",
     border: "border-zone-amber/40",
     bg: "bg-zone-amber/10",
-    hex: "#ffb224",
+    hex: "#e2aa52",
   },
   fatigued: {
     label: "疲劳积累",
@@ -99,7 +99,7 @@ export const FORM_ZONE_META: Record<FormZone, ZoneMeta> = {
     text: "text-zone-red",
     border: "border-zone-red/40",
     bg: "bg-zone-red/10",
-    hex: "#ff5c5c",
+    hex: "#e8735f",
   },
 };
 
@@ -110,7 +110,7 @@ export const READY_ZONE_META: Record<ReadinessLevel, ZoneMeta> = {
     text: "text-zone-green",
     border: "border-zone-green/40",
     bg: "bg-zone-green/10",
-    hex: "#00e08c",
+    hex: "#7cc59b",
   },
   normal: {
     label: "正常练",
@@ -118,7 +118,7 @@ export const READY_ZONE_META: Record<ReadinessLevel, ZoneMeta> = {
     text: "text-accent",
     border: "border-accent/40",
     bg: "bg-accent/10",
-    hex: "#22d3ee",
+    hex: "#8fa9c9",
   },
   downgrade: {
     label: "主动降档",
@@ -126,7 +126,7 @@ export const READY_ZONE_META: Record<ReadinessLevel, ZoneMeta> = {
     text: "text-zone-amber",
     border: "border-zone-amber/40",
     bg: "bg-zone-amber/10",
-    hex: "#ffb224",
+    hex: "#e2aa52",
   },
   rest: {
     label: "今天休息",
@@ -134,14 +134,14 @@ export const READY_ZONE_META: Record<ReadinessLevel, ZoneMeta> = {
     text: "text-zone-red",
     border: "border-zone-red/40",
     bg: "bg-zone-red/10",
-    hex: "#ff5c5c",
+    hex: "#e8735f",
   },
   unknown: {
     label: "累计中",
     desc: "数据不足,暂按常规",
-    text: "text-zinc-400",
-    border: "border-white/10",
-    bg: "bg-white/5",
-    hex: "#3f3f46",
+    text: "text-ink-3",
+    border: "border-line-strong",
+    bg: "bg-surface-2",
+    hex: "#5c5852",
   },
 };

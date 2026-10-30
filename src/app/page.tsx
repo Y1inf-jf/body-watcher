@@ -9,12 +9,18 @@ import RecoveryScoreCard from "@/components/RecoveryScoreCard";
 import ReadinessCard, { type AdviceView } from "@/components/ReadinessCard";
 import InsightBanner, { type InsightView } from "@/components/InsightBanner";
 import TrainingStatusCard from "@/components/TrainingStatusCard";
+import KeyMetrics from "@/components/KeyMetrics";
 import PlanCard from "@/components/PlanCard";
 import ExerciseProgress from "@/components/ExerciseProgress";
 import TrainingCalendar from "@/components/TrainingCalendar";
 import StatsPanel from "@/components/StatsPanel";
 import WeeklySummary from "@/components/WeeklySummary";
 import MonthlyReview from "@/components/MonthlyReview";
+import PageHeader from "@/components/ui/PageHeader";
+import Section from "@/components/ui/Section";
+import Notice from "@/components/ui/Notice";
+import SegmentedTabs, { tabPanelProps } from "@/components/ui/SegmentedTabs";
+import { CHART } from "@/components/ui/chart-theme";
 import type { RecoveryFeatures, RecoveryScore } from "@/lib/recovery";
 import type { Readiness } from "@/lib/readiness";
 import type { SleepNeedResult, TrainingStatus } from "@/lib/training-status";
@@ -43,7 +49,7 @@ interface DashboardData {
   }[];
 }
 
-// 总览页信息分层:恢复/状态/肌群常驻,细节收进 Tab,打开即见"今天练什么"。
+// 总览页信息分层:今日结论 → 洞察 → 身体/负荷 → 肌群 → 明细(Tab)。
 const TABS = [
   { key: "trend", label: "趋势", icon: Activity },
   { key: "training", label: "训练", icon: Dumbbell },
@@ -84,23 +90,18 @@ export default function DashboardPage() {
 
   if (loadError) {
     return (
-      <div className="max-w-5xl space-y-4">
-        <h2 className="text-xl font-bold">训练总览</h2>
-        <div className="panel p-6 text-center">
-          <p className="text-zinc-400 mb-3">加载数据失败</p>
-          <button
-            onClick={fetchData}
-            className="inline-block rounded-lg bg-accent/90 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent"
-          >
-            重试
-          </button>
-        </div>
+      <div className="space-y-4">
+        <PageHeader title="训练总览" />
+        <Notice tone="err">加载数据失败</Notice>
+        <button onClick={fetchData} className="btn btn-secondary">
+          重试
+        </button>
       </div>
     );
   }
 
   if (!data) {
-    return <div className="text-zinc-500">加载中...</div>;
+    return <p className="py-24 text-center text-sm text-ink-3">加载中…</p>;
   }
 
   const isEmpty = data.healthMetrics.length === 0 && data.recentTrainings.length === 0;
@@ -109,157 +110,179 @@ export default function DashboardPage() {
   const healthData = data.chartSeries ?? [];
 
   return (
-    <div className="space-y-5 max-w-5xl">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold">训练总览</h2>
-        <a
-          href="/api/export"
-          className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 px-3 py-1.5 rounded text-xs"
-        >
-          导出数据
-        </a>
-      </div>
+    <div>
+      <h1 className="sr-only">训练总览</h1>
 
-      {data.insights && data.insights.length > 0 && (
-        <InsightBanner
-          insights={data.insights}
-          onDismiss={(id) => {
-            fetch(`/api/insights?id=${id}`, { method: "DELETE" });
-            setData((d) => (d ? { ...d, insights: d.insights?.filter((i) => i.id !== id) } : d));
-          }}
-        />
+      {data.recovery && data.trainingStatus && (
+        <section
+          aria-label="今日"
+          className="grid gap-10 border-b border-line pb-10 lg:grid-cols-12 lg:gap-12 lg:pb-12"
+        >
+          {data.readiness ? (
+            <>
+              <div className="min-w-0 lg:col-span-7">
+                <ReadinessCard
+                  readiness={data.readiness}
+                  recovery={data.recovery.score}
+                  status={data.trainingStatus}
+                  advice={data.advice}
+                  today={data.today}
+                  onAdviceUpdate={(a) => {
+                    setData((d) => (d ? { ...d, advice: a } : d));
+                    // 回填一条后重拉:有积压时反馈条切到下一条待回填,顺带刷新洞察数字。
+                    fetchData();
+                  }}
+                />
+              </div>
+              <div className="min-w-0 lg:col-span-5 lg:border-l lg:border-line lg:pl-12">
+                <KeyMetrics
+                  recovery={data.recovery}
+                  status={data.trainingStatus}
+                  sleepNeed={data.sleepNeed ?? null}
+                />
+              </div>
+            </>
+          ) : (
+            <div className="min-w-0 lg:col-span-12">
+              <KeyMetrics
+                recovery={data.recovery}
+                status={data.trainingStatus}
+                sleepNeed={data.sleepNeed ?? null}
+              />
+            </div>
+          )}
+        </section>
       )}
 
-      {data.readiness && data.recovery && data.trainingStatus && (
-        <ReadinessCard
-          readiness={data.readiness}
-          recovery={data.recovery.score}
-          status={data.trainingStatus}
-          advice={data.advice}
-          today={data.today}
-          onAdviceUpdate={(a) => {
-            setData((d) => (d ? { ...d, advice: a } : d));
-            // 回填一条后重拉:有积压时反馈条切到下一条待回填,顺带刷新洞察数字。
-            fetchData();
-          }}
-        />
+      {data.insights && data.insights.length > 0 && (
+        <section aria-label="洞察提醒" className="border-b border-line py-6">
+          <InsightBanner
+            insights={data.insights}
+            onDismiss={(id) => {
+              fetch(`/api/insights?id=${id}`, { method: "DELETE" });
+              setData((d) => (d ? { ...d, insights: d.insights?.filter((i) => i.id !== id) } : d));
+            }}
+          />
+        </section>
       )}
 
       {data.recovery && (
-        <div className="grid gap-4 lg:grid-cols-2">
-          <RecoveryScoreCard features={data.recovery.features} score={data.recovery.score} sleepNeed={data.sleepNeed ?? null} />
-          {data.trainingStatus && <TrainingStatusCard status={data.trainingStatus} loadContext={data.loadContext ?? null} />}
+        <div className="grid gap-x-12 gap-y-10 border-b border-line py-10 lg:grid-cols-2">
+          <div className="min-w-0">
+            <RecoveryScoreCard features={data.recovery.features} score={data.recovery.score} sleepNeed={data.sleepNeed ?? null} />
+          </div>
+          {data.trainingStatus && (
+            <div className="min-w-0">
+              <TrainingStatusCard status={data.trainingStatus} loadContext={data.loadContext ?? null} />
+            </div>
+          )}
         </div>
       )}
 
       {isEmpty && (
-        <div className="panel p-6 text-center">
-          <p className="text-zinc-400 mb-2">欢迎使用 Body Watcher</p>
-          <p className="text-zinc-600 text-sm mb-4">
+        <div className="py-16 text-center">
+          <p className="mb-2 text-ink-2">欢迎使用 Body Watcher</p>
+          <p className="mb-6 text-sm text-ink-3">
             开始记录你的健康数据和训练日志，系统会自动分析并生成训练计划。
           </p>
-          <Link
-            href="/input"
-            className="inline-block rounded-lg bg-accent/90 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent"
-          >
+          <Link href="/input" className="btn btn-primary">
             开始录入数据
           </Link>
         </div>
       )}
 
-      {!isEmpty && <RecoveryPanel data={data.muscleRecovery} />}
+      {!isEmpty && (
+        <div className="border-b border-line py-10">
+          <RecoveryPanel data={data.muscleRecovery} />
+        </div>
+      )}
 
       {!isEmpty && (
-        <>
-          <div role="tablist" className="flex w-fit gap-1 rounded-lg border border-white/[0.07] bg-[#0f0f12] p-1">
-            {TABS.map((t) => {
-              const Icon = t.icon;
-              const active = tab === t.key;
-              return (
-                <button
-                  key={t.key}
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => setTab(t.key)}
-                  className={`relative flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-xs font-medium transition-colors ${
-                    active ? "bg-white/[0.08] text-zinc-50" : "text-zinc-500 hover:text-zinc-300"
-                  }`}
-                >
-                  {active && (
-                    <span className="absolute left-0 top-1/2 h-3.5 w-0.5 -translate-y-1/2 rounded-full bg-accent" />
-                  )}
-                  <Icon size={13} strokeWidth={1.8} />
-                  {t.label}
-                </button>
-              );
-            })}
-          </div>
+        <Section index="05" title="明细" className="py-10">
+          <SegmentedTabs tabs={TABS} value={tab} onChange={setTab} idBase="dash" />
 
-          {tab === "trend" && (
-            <div key="trend" className="animate-fade-up grid grid-cols-1 gap-4 md:grid-cols-3">
-              <TrendChart
-                title="HRV 趋势"
-                data={healthData}
-                series={[{ dataKey: "hrv", color: "#00e08c", name: "HRV (ms)" }]}
-              />
-              <TrendChart
-                title="静息心率"
-                data={healthData}
-                series={[{ dataKey: "resting_hr", color: "#ff5c5c", name: "心率 (bpm)" }]}
-              />
-              <TrendChart
-                title="睡眠时长"
-                data={healthData}
-                series={[
-                  { dataKey: "sleep_in_bed", color: "#22d3ee", name: "在床 (h)" },
-                  { dataKey: "sleep_asleep", color: "#a78bfa", name: "睡着 (h)" },
-                ]}
-              />
-            </div>
-          )}
-
-          {tab === "training" && (
-            <div key="training" className="animate-fade-up space-y-5">
-              <StatsPanel />
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                <TrainingCalendar />
-                <ExerciseProgress />
+          <div key={tab} {...tabPanelProps("dash", tab)} className="animate-fade-up pt-6">
+            {tab === "trend" && (
+              <div className="grid grid-cols-1 gap-x-8 gap-y-10 md:grid-cols-3">
+                <div className="min-w-0">
+                  <TrendChart
+                    title="HRV 趋势"
+                    unit="ms"
+                    data={healthData}
+                    series={[{ dataKey: "hrv", color: CHART.series.primary, name: "HRV (ms)" }]}
+                  />
+                </div>
+                <div className="min-w-0">
+                  <TrendChart
+                    title="静息心率"
+                    unit="bpm"
+                    data={healthData}
+                    series={[{ dataKey: "resting_hr", color: CHART.series.primary, name: "心率 (bpm)" }]}
+                  />
+                </div>
+                <div className="min-w-0">
+                  <TrendChart
+                    title="睡眠时长"
+                    unit="h"
+                    data={healthData}
+                    series={[
+                      { dataKey: "sleep_in_bed", color: CHART.series.muted, name: "在床 (h)" },
+                      { dataKey: "sleep_asleep", color: CHART.series.primary, name: "睡着 (h)" },
+                    ]}
+                  />
+                </div>
               </div>
-              <div>
-                <h3 className="mb-3 text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">
-                  Recent · 近期训练
-                </h3>
-                {data.recentTrainings.length === 0 ? (
-                  <div className="panel p-4 text-center">
-                    <p className="text-sm text-zinc-600">
+            )}
+
+            {tab === "training" && (
+              <div className="space-y-10">
+                <StatsPanel />
+                <div className="grid grid-cols-1 gap-10 lg:grid-cols-2">
+                  <div className="min-w-0">
+                    <TrainingCalendar />
+                  </div>
+                  <div className="min-w-0">
+                    <ExerciseProgress />
+                  </div>
+                </div>
+                <div>
+                  <h3 className="mb-2 text-sm font-medium text-ink">近期训练</h3>
+                  {data.recentTrainings.length === 0 ? (
+                    <p className="py-6 text-sm text-ink-3">
                       还没有训练记录，
-                      <Link href="/input" className="text-accent hover:text-accent/80">去录入</Link>
+                      <Link href="/input" className="text-accent underline-offset-4 hover:underline">去录入</Link>
                     </p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {data.recentTrainings.map((log) => (
-                      <PlanCard
-                        key={log.id as number}
-                        log={log as unknown as Parameters<typeof PlanCard>[0]["log"]}
-                        onDeleted={fetchData}
-                        onEdit={(id) => { window.location.href = `/input?edit=${id}`; }}
-                      />
-                    ))}
-                  </div>
-                )}
+                  ) : (
+                    <div className="divide-y divide-line">
+                      {data.recentTrainings.map((log) => (
+                        <PlanCard
+                          key={log.id as number}
+                          log={log as unknown as Parameters<typeof PlanCard>[0]["log"]}
+                          onDeleted={fetchData}
+                          onEdit={(id) => { window.location.href = `/input?edit=${id}`; }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {tab === "report" && (
-            <div key="report" className="animate-fade-up space-y-4">
-              <WeeklySummary />
-              <MonthlyReview />
-            </div>
-          )}
-        </>
+            {tab === "report" && (
+              <div className="space-y-10">
+                <WeeklySummary />
+                <MonthlyReview />
+              </div>
+            )}
+          </div>
+        </Section>
       )}
+
+      <footer className="pt-10 text-xs text-ink-3">
+        <a href="/api/export" className="underline-offset-4 hover:text-ink hover:underline">
+          导出全部数据
+        </a>
+      </footer>
     </div>
   );
 }

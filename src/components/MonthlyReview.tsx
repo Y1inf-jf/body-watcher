@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Sparkles, Trash2 } from "lucide-react";
-import { Card, CardTitle } from "./ui/Card";
+import Disclosure from "./ui/Disclosure";
 
 interface Report {
   id: number;
@@ -71,71 +71,64 @@ export default function MonthlyReview() {
   };
 
   return (
-    <Card className="animate-fade-up p-4">
-      <CardTitle
-        right={
-          <div className="flex gap-2">
-            <button
-              onClick={generate}
-              disabled={generating}
-              className="flex items-center gap-1.5 rounded border border-accent/30 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
-            >
-              <Sparkles size={12} strokeWidth={2} />
-              {generating ? "复盘生成中..." : "生成本月复盘"}
+    <div className="animate-fade-up">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-3">
+        <h3 className="text-sm font-medium text-ink">阶段复盘（近 30 天）</h3>
+        <div className="flex gap-2">
+          <button onClick={generate} disabled={generating} className="btn btn-secondary btn-sm">
+            <Sparkles size={12} strokeWidth={2} />
+            {generating ? "复盘生成中..." : "生成本月复盘"}
+          </button>
+          {generating && (
+            <button onClick={() => abortRef.current?.abort()} className="btn btn-ghost btn-sm">
+              取消
             </button>
-            {generating && (
-              <button onClick={() => abortRef.current?.abort()} className="text-xs text-zinc-500 hover:text-zone-red">
-                取消
-              </button>
-            )}
-          </div>
-        }
-      >
-        Monthly Review · 阶段复盘（近 30 天）
-      </CardTitle>
-      <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+          )}
+        </div>
+      </div>
+      <p className="mt-3 text-xs leading-relaxed text-ink-3">
         汇总近 30 天的恢复分快照、训练量、体成分与建议采纳情况,给出趋势解读与下阶段重点。生成后自动存档。
       </p>
 
       {(text || error) && (
-        <div className="mt-3 rounded-lg border border-white/5 bg-white/[0.02] p-3">
-          <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-zinc-300">
-            {error ? "生成失败，请检查 API Key 配置" : text}
-          </pre>
-        </div>
+        <pre className="mt-4 whitespace-pre-wrap font-sans text-sm leading-relaxed text-ink-2">
+          {error ? "生成失败，请检查 API Key 配置" : text}
+        </pre>
       )}
 
       {reports.length > 0 && (
-        <div className="mt-3 space-y-1.5">
-          <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">
-            历史复盘（{reports.length}）
-          </div>
-          {reports.map((r) => (
-            <details key={r.id} className="rounded-lg border border-white/5 bg-white/[0.02] p-2.5">
-              <summary className="flex cursor-pointer items-center justify-between gap-3 text-sm">
-                <span className="min-w-0 truncate font-medium text-zinc-200">
-                  {r.period_start.slice(5)} ~ {r.period_end.slice(5)}
-                </span>
-                <span className="flex shrink-0 items-center gap-2">
-                  <span className="text-[10px] text-zinc-600">{r.created_at.slice(5, 16)}</span>
+        <div className="mt-6">
+          <div className="mb-1 text-xs text-ink-3">历史复盘（{reports.length}）</div>
+          <div className="divide-y divide-line border-y border-line">
+            {reports.map((r) => (
+              <Disclosure
+                key={r.id}
+                summary={
+                  <span className="font-mono text-sm text-ink">
+                    {r.period_start.slice(5)} ~ {r.period_end.slice(5)}
+                  </span>
+                }
+                meta={<span className="font-mono text-[11px] text-ink-3">{r.created_at.slice(5, 16)}</span>}
+                actions={
                   <button
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
                       remove(r.id);
                     }}
-                    className="text-zinc-600 transition-colors hover:text-zone-red"
+                    className="grid h-8 w-8 place-items-center rounded-md text-ink-3 transition-colors hover:bg-surface-2 hover:text-zone-red"
                     aria-label="删除该复盘"
                   >
                     <Trash2 size={13} />
                   </button>
-                </span>
-              </summary>
-              <pre className="mt-2 whitespace-pre-wrap font-sans text-sm leading-relaxed text-zinc-300">{r.content}</pre>
-            </details>
-          ))}
+                }
+              >
+                <pre className="whitespace-pre-wrap pb-3 font-sans text-sm leading-relaxed text-ink-2">{r.content}</pre>
+              </Disclosure>
+            ))}
+          </div>
         </div>
       )}
-    </Card>
+    </div>
   );
 }

@@ -2,7 +2,6 @@
 
 import { useState, useRef } from "react";
 import { Sparkles } from "lucide-react";
-import { Card, CardTitle } from "./ui/Card";
 
 export default function WeeklySummary() {
   const [generating, setGenerating] = useState(false);
@@ -40,31 +39,24 @@ export default function WeeklySummary() {
   };
 
   return (
-    <Card className="animate-fade-up p-4">
-      <CardTitle
-        right={
-          <div className="flex gap-2">
-            <button
-              onClick={generate}
-              disabled={generating}
-              className="flex items-center gap-1.5 rounded border border-accent/30 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
-            >
-              <Sparkles size={12} strokeWidth={2} />
-              {generating ? "分析中..." : "生成总结"}
+    <div className="animate-fade-up">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-3">
+        <h3 className="text-sm font-medium text-ink">本周训练总结</h3>
+        <div className="flex gap-2">
+          <button onClick={generate} disabled={generating} className="btn btn-secondary btn-sm">
+            <Sparkles size={12} strokeWidth={2} />
+            {generating ? "分析中..." : "生成总结"}
+          </button>
+          {generating && (
+            <button onClick={() => abortRef.current?.abort()} className="btn btn-ghost btn-sm">
+              取消
             </button>
-            {generating && (
-              <button onClick={() => abortRef.current?.abort()} className="text-xs text-zinc-500 hover:text-zone-red">
-                取消
-              </button>
-            )}
-          </div>
-        }
-      >
-        Weekly Summary · 本周训练总结
-      </CardTitle>
+          )}
+        </div>
+      </div>
       {text && (
-        <pre className="mt-3 whitespace-pre-wrap font-sans text-sm leading-relaxed text-zinc-300">{text}</pre>
+        <pre className="mt-4 whitespace-pre-wrap font-sans text-sm leading-relaxed text-ink-2">{text}</pre>
       )}
-    </Card>
+    </div>
   );
 }

@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import PageHeader from "@/components/ui/PageHeader";
+import Section from "@/components/ui/Section";
+import Notice from "@/components/ui/Notice";
+import Stat from "@/components/ui/Stat";
+import Tag from "@/components/ui/Tag";
+import Disclosure from "@/components/ui/Disclosure";
 
 interface SyncLogRow {
   started_at?: string;
@@ -66,6 +72,33 @@ interface XunjiInfo {
   datesFetched: number;
   latest?: { datestr: string; trains_found: number; fetched_at: string };
 }
+
+// 7 天表的行定义（转置后每行一个指标）；取值/格式化与原按日期行表达式一致
+const METRIC_ROWS: { label: string; render: (m: MetricsRow) => ReactNode }[] = [
+  { label: "就枕-起床", render: (m) => (m.sleep_bedtime && m.sleep_wakeup ? `${m.sleep_bedtime}-${m.sleep_wakeup}` : "—") },
+  { label: "在床", render: (m) => fmtDuration(m.sleep_in_bed_minutes) },
+  { label: "深睡", render: (m) => fmtDuration(m.sleep_deep_minutes) },
+  { label: "REM", render: (m) => fmtDuration(m.sleep_rem_minutes) },
+  { label: "HRV均值", render: (m) => m.hrv_avg_ms ?? "—" },
+  { label: "深睡RMSSD", render: (m) => m.hrv_rmssd_deep_ms ?? "—" },
+  { label: "静息心率", render: (m) => m.resting_hr ?? "—" },
+  { label: "呼吸率", render: (m) => m.respiratory_rate ?? "—" },
+  { label: "血氧%", render: (m) => m.spo2_avg ?? "—" },
+  {
+    label: "体温°C(Δ基线)",
+    render: (m) =>
+      m.temp_night_c != null
+        ? `${m.temp_night_c.toFixed(1)}${
+            m.temp_baseline_c != null
+              ? ` (${m.temp_night_c - m.temp_baseline_c >= 0 ? "+" : ""}${(m.temp_night_c - m.temp_baseline_c).toFixed(1)})`
+              : ""
+          }`
+        : "—",
+  },
+  { label: "步数", render: (m) => m.steps ?? "—" },
+  { label: "体重kg", render: (m) => m.weight_kg ?? "—" },
+  { label: "运动min", render: (m) => m.exercise_minutes ?? "—" },
+];
 
 export default function GoogleSyncPage() {
   const [status, setStatus] = useState<StatusData | null>(null);
@@ -172,216 +205,225 @@ export default function GoogleSyncPage() {
 
   const running = status?.lastSync?.status === "running";
 
+  // 状态标签：Google Health / 训记 的连接状态，以及上次同步状态着色
+  const gTag =
+    status === null ? (
+      <Tag tone="neutral">加载中</Tag>
+    ) : !status.configured ? (
+      <Tag tone="amber">未配置</Tag>
+    ) : status.connected ? (
+      <Tag tone="green">已连接</Tag>
+    ) : (
+      <Tag tone="neutral">未连接</Tag>
+    );
+  const xTag =
+    xunjiInfo === null ? (
+      <Tag tone="neutral">加载中</Tag>
+    ) : !xunjiInfo.configured ? (
+      <Tag tone="amber">未配置</Tag>
+    ) : (
+      <Tag tone="green">已配置</Tag>
+    );
+  const lastStatus = status?.lastSync?.status;
+  const lastTone =
+    lastStatus === "success" ? "green" : lastStatus === "partial" ? "amber" : lastStatus === "running" ? "accent" : "red";
+
   return (
-    <div className="space-y-4 max-w-3xl">
-      <h2 className="text-xl font-bold text-zinc-100">数据同步 · Google Health</h2>
-      <p className="text-sm text-zinc-500 -mt-2">
-        Fitbit Air → Google Health App → 云端 → 本应用。数据链路与踩坑记录见 docs/google-health-spike.md。
-      </p>
+    <div className="mx-auto max-w-5xl">
+      <PageHeader title="数据同步" description="Google Health 与训记的连接状态和最近同步结果" />
 
       {banner && (
-        <div className={`rounded-lg border px-4 py-3 text-sm ${banner.kind === "ok" ? "border-zone-green/40 bg-zone-green/10 text-zone-green" : "border-zone-red/40 bg-zone-red/10 text-zone-red"}`}>
+        <Notice tone={banner.kind} className="mb-6">
           {banner.text}
-        </div>
+        </Notice>
       )}
       {loadError && (
-        <div className="rounded-lg border border-zone-red/40 bg-zone-red/10 px-4 py-3 text-sm text-zone-red">
+        <Notice tone="err" className="mb-6">
           状态加载失败：{loadError}
-        </div>
+        </Notice>
       )}
 
-      {/* 连接状态卡 */}
-      <div className="panel animate-fade-up p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-medium text-zinc-100">连接状态</h3>
+      {/* 同步状态：三格并排（窄屏堆叠） */}
+      <section aria-label="同步状态" className="grid border-b border-line md:grid-cols-2 lg:grid-cols-3">
+        {/* 格 1：Google Health 连接与上次同步 */}
+        <div className="flex min-w-0 flex-col py-6 md:pr-6">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-sm font-medium text-ink">
+              <span className="mr-2 font-mono text-[11px] text-ink-3">01</span>Google Health
+            </h2>
+            {gTag}
+          </div>
+          <div className="mt-5">
+            <Stat
+              label="上次同步"
+              value={fmtTime(status?.lastSync?.finished_at)}
+              sub={status?.lastSync?.status ? <Tag tone={lastTone}>{status.lastSync.status}</Tag> : undefined}
+            />
+          </div>
+          <div className="mt-3 text-xs">
             {status === null ? (
-              <p className="text-sm text-zinc-500 mt-1">加载中…</p>
+              <p className="text-ink-3">加载中…</p>
             ) : !status.configured ? (
-              <p className="text-sm text-zone-amber mt-1">
+              <p className="text-zone-amber">
                 .env 缺少 GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET，参考 .env.example 配置后重启。
               </p>
             ) : status.connected ? (
-              <p className="text-sm text-zinc-400 mt-1">
+              <p className="text-ink-2">
                 已连接，token 至 {status.expiresAt ? new Date(status.expiresAt).toLocaleString("zh-CN", { hour12: false }) : "—"} 前有效（到期自动刷新）
               </p>
             ) : (
-              <p className="text-sm text-zinc-400 mt-1">未连接。授权时请使用手机 Google Health App 同款的 Google 账号。</p>
+              <p className="text-ink-2">未连接。授权时请使用手机 Google Health App 同款的 Google 账号。</p>
             )}
           </div>
-          {status?.connected ? (
-            <div className="flex gap-2">
-              <button
-                onClick={syncNow}
-                disabled={syncing || running}
-                className="rounded-lg bg-accent/90 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent disabled:opacity-50"
-              >
-                {syncing || running ? "同步中…" : "立即同步"}
-              </button>
-              <button
-                onClick={disconnect}
-                className="rounded border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-zinc-200 transition-colors hover:bg-white/[0.08]"
-              >
-                断开
-              </button>
-            </div>
-          ) : (
-            status?.configured && (
-              <a
-                href="/api/google/auth"
-                className="rounded-lg bg-accent/90 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-accent"
-              >
-                连接 Google Health
-              </a>
-            )
+          {status?.lastSync?.message && (
+            <p className="mt-2 break-all text-xs text-zone-red">{status.lastSync.message}</p>
           )}
-        </div>
-        {running && <p className="text-xs text-zinc-500 mt-2">一次同步正在进行中，完成后本页自动刷新…</p>}
-      </div>
-
-      {/* 训记(训练记录) */}
-      <div className="panel animate-fade-up p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-medium text-zinc-100">训练记录(训记)</h3>
-            {xunjiInfo === null ? (
-              <p className="text-sm text-zinc-500 mt-1">加载中…</p>
-            ) : !xunjiInfo.configured ? (
-              <p className="text-sm text-zone-amber mt-1">.env 缺少 XUNJI_API_KEY,在训记 App 内申请后填入。</p>
+          {running && <p className="mt-2 text-xs text-ink-3">一次同步正在进行中，完成后本页自动刷新…</p>}
+          <div className="mt-auto flex flex-wrap items-center gap-2 pt-5">
+            {status?.connected ? (
+              <>
+                <button onClick={syncNow} disabled={syncing || running} className="btn btn-primary">
+                  {syncing || running ? "同步中…" : "立即同步"}
+                </button>
+                <button onClick={disconnect} className="btn btn-secondary btn-sm">
+                  断开
+                </button>
+              </>
             ) : (
-              <p className="text-sm text-zinc-400 mt-1">
-                已拉取 {xunjiInfo.datesFetched} 天
-                {xunjiInfo.latest && `,最近 ${xunjiInfo.latest.datestr}(发现 ${xunjiInfo.latest.trains_found} 条训练)`}
-              </p>
+              status?.configured && (
+                <a href="/api/google/auth" className="btn btn-primary">
+                  连接 Google Health
+                </a>
+              )
             )}
           </div>
-          <div className="flex gap-2">
+        </div>
+
+        {/* 格 2：训记训练记录 */}
+        <div className="flex min-w-0 flex-col border-t border-line py-6 md:border-t-0 md:border-l md:pl-6 lg:pr-6">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-sm font-medium text-ink">
+              <span className="mr-2 font-mono text-[11px] text-ink-3">02</span>训练记录(训记)
+            </h2>
+            {xTag}
+          </div>
+          <div className="mt-5">
+            {xunjiInfo === null ? (
+              <p className="text-sm text-ink-3">加载中…</p>
+            ) : !xunjiInfo.configured ? (
+              <p className="text-sm text-zone-amber">.env 缺少 XUNJI_API_KEY,在训记 App 内申请后填入。</p>
+            ) : (
+              <>
+                <Stat
+                  label="已拉取"
+                  value={xunjiInfo.datesFetched}
+                  unit="天"
+                  sub={
+                    xunjiInfo.latest &&
+                    `最近 ${xunjiInfo.latest.datestr}(发现 ${xunjiInfo.latest.trains_found} 条训练)`
+                  }
+                />
+                {xunjiInfo.latest && (
+                  <p className="mt-2 text-xs text-ink-3">最近拉取 {fmtTime(xunjiInfo.latest.fetched_at)}</p>
+                )}
+              </>
+            )}
+          </div>
+          <div className="mt-auto flex flex-wrap items-center gap-2 pt-5">
             {xunjiInfo?.configured && (
               <>
-                <button
-                  onClick={() => syncXunji(false)}
-                  disabled={xjSyncing}
-                  className="rounded border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-zinc-200 transition-colors hover:bg-white/[0.08] disabled:opacity-50"
-                >
+                <button onClick={() => syncXunji(false)} disabled={xjSyncing} className="btn btn-secondary">
                   {xjSyncing ? "同步中…" : "同步最近 7 天"}
                 </button>
-                <button
-                  onClick={() => syncXunji(true)}
-                  disabled={xjSyncing}
-                  className="rounded border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-zinc-200 transition-colors hover:bg-white/[0.08] disabled:opacity-50"
-                >
+                <button onClick={() => syncXunji(true)} disabled={xjSyncing} className="btn btn-ghost btn-sm">
                   强刷 31 天
                 </button>
               </>
             )}
           </div>
         </div>
-        <p className="text-xs text-zinc-500 mt-2">训记里的训练会镜像进训练记录(动作×组×次×重量),供恢复分析与计划生成使用。</p>
-      </div>
 
-      {/* 训练记录(训记)结束 */}
-
-      {/* 上次同步 */}
-      {status?.lastSync && (
-        <div className="panel animate-fade-up p-4">
-          <h3 className="font-medium text-zinc-100">上次同步</h3>
-          <div className="text-sm text-zinc-400 mt-2 space-y-1">
-            <p>
-              状态：
-              <span
-                className={
-                  status.lastSync.status === "success"
-                    ? "text-zone-green"
-                    : status.lastSync.status === "partial"
-                      ? "text-zone-amber"
-                      : status.lastSync.status === "running"
-                        ? "text-blue-400"
-                        : "text-zone-red"
-                }
-              >
-                {status.lastSync.status}
-              </span>
-              <span className="text-zinc-500"> · 结束于 {fmtTime(status.lastSync.finished_at)}</span>
-            </p>
-            {status.lastSync.message && <p className="text-zone-red break-all">{status.lastSync.message}</p>}
-          </div>
-        </div>
-      )}
-
-      {/* 今日拉到的数据量 */}
-      {status && status.todayCounts.length > 0 && (
-        <div className="panel animate-fade-up p-4">
-          <h3 className="font-medium text-zinc-100">今日数据点</h3>
-          <div className="flex flex-wrap gap-2 mt-2">
-            {status.todayCounts.map(({ data_type, points }) => (
-              <span key={data_type} className="rounded border border-white/[0.08] bg-white/[0.03] px-2 py-1 text-xs text-zinc-300">
-                {TYPE_LABELS[data_type] ?? data_type}: {points}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 最近 7 天汇总 */}
-      {status && status.metrics.length > 0 && (
-        <div className="panel animate-fade-up p-4 overflow-x-auto">
-          <h3 className="font-medium text-zinc-100 mb-2">最近 7 天（Google Health）</h3>
-          <table className="w-full text-xs text-zinc-300">
-            <thead>
-              <tr className="text-left text-zinc-500 border-b border-white/10">
-                <th className="py-1.5 pr-3">日期</th>
-                <th className="py-1.5 pr-3">就枕-起床</th>
-                <th className="py-1.5 pr-3">在床</th>
-                <th className="py-1.5 pr-3">深睡</th>
-                <th className="py-1.5 pr-3">REM</th>
-                <th className="py-1.5 pr-3">HRV均值</th>
-                <th className="py-1.5 pr-3">深睡RMSSD</th>
-                <th className="py-1.5 pr-3">静息心率</th>
-                <th className="py-1.5 pr-3">呼吸率</th>
-                <th className="py-1.5 pr-3">血氧%</th>
-                <th className="py-1.5 pr-3">体温°C(Δ基线)</th>
-                <th className="py-1.5 pr-3">步数</th>
-                <th className="py-1.5 pr-3">体重kg</th>
-                <th className="py-1.5">运动min</th>
-              </tr>
-            </thead>
-            <tbody>
-              {status.metrics.map((m) => (
-                <tr key={m.date} className="border-b border-white/5">
-                  <td className="py-1.5 pr-3">{m.date}</td>
-                  <td className="py-1.5 pr-3">{m.sleep_bedtime && m.sleep_wakeup ? `${m.sleep_bedtime}-${m.sleep_wakeup}` : "—"}</td>
-                  <td className="py-1.5 pr-3">{fmtDuration(m.sleep_in_bed_minutes)}</td>
-                  <td className="py-1.5 pr-3">{fmtDuration(m.sleep_deep_minutes)}</td>
-                  <td className="py-1.5 pr-3">{fmtDuration(m.sleep_rem_minutes)}</td>
-                  <td className="py-1.5 pr-3">{m.hrv_avg_ms ?? "—"}</td>
-                  <td className="py-1.5 pr-3">{m.hrv_rmssd_deep_ms ?? "—"}</td>
-                  <td className="py-1.5 pr-3">{m.resting_hr ?? "—"}</td>
-                  <td className="py-1.5 pr-3">{m.respiratory_rate ?? "—"}</td>
-                  <td className="py-1.5 pr-3">{m.spo2_avg ?? "—"}</td>
-                  <td className="py-1.5 pr-3">
-                    {m.temp_night_c != null
-                      ? `${m.temp_night_c.toFixed(1)}${
-                          m.temp_baseline_c != null
-                            ? ` (${m.temp_night_c - m.temp_baseline_c >= 0 ? "+" : ""}${(m.temp_night_c - m.temp_baseline_c).toFixed(1)})`
-                            : ""
-                        }`
-                      : "—"}
-                  </td>
-                  <td className="py-1.5 pr-3">{m.steps ?? "—"}</td>
-                  <td className="py-1.5 pr-3">{m.weight_kg ?? "—"}</td>
-                  <td className="py-1.5">{m.exercise_minutes ?? "—"}</td>
-                </tr>
+        {/* 格 3：今日数据点 */}
+        <div className="min-w-0 border-t border-line py-6 md:col-span-2 lg:col-span-1 lg:border-t-0 lg:border-l lg:pl-6">
+          <h2 className="text-sm font-medium text-ink">
+            <span className="mr-2 font-mono text-[11px] text-ink-3">03</span>今日数据点
+          </h2>
+          {status && status.todayCounts.length > 0 ? (
+            <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-2 md:grid-cols-4 lg:grid-cols-2">
+              {status.todayCounts.map(({ data_type, points }) => (
+                <div key={data_type} className="flex items-baseline justify-between gap-2">
+                  <dt className="text-xs text-ink-3">{TYPE_LABELS[data_type] ?? data_type}</dt>
+                  <dd className="font-mono text-sm tabular-nums text-ink">{points}</dd>
+                </div>
               ))}
-            </tbody>
-          </table>
+            </dl>
+          ) : (
+            <p className="mt-5 text-sm text-ink-3">—</p>
+          )}
         </div>
+      </section>
+
+      {/* 最近 7 天汇总（转置：行为指标，列为日期，左起最新） */}
+      {status && status.metrics.length > 0 && (
+        <Section
+          index="04"
+          title="最近 7 天（Google Health）"
+          aside={<span className="text-xs text-ink-3">左起为最新</span>}
+          className="pt-10"
+        >
+          <div className="-mx-4 overflow-x-auto px-4 md:mx-0 md:px-0">
+            <table className="w-full min-w-[38rem] whitespace-nowrap font-mono text-xs tabular-nums text-ink-2">
+              <thead>
+                <tr className="border-b border-line text-ink-3">
+                  <th scope="col" className="sticky left-0 z-10 bg-bg py-2 pr-4 text-left font-sans font-normal">
+                    指标
+                  </th>
+                  {status.metrics.map((m, i) => (
+                    <th
+                      key={m.date}
+                      scope="col"
+                      title={m.date}
+                      className={`py-2 pl-3 text-right font-normal ${i === 0 ? "text-ink" : ""}`}
+                    >
+                      {m.date.slice(5)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {METRIC_ROWS.map((r) => (
+                  <tr key={r.label} className="border-b border-line">
+                    <th
+                      scope="row"
+                      className="sticky left-0 z-10 bg-bg py-2 pr-4 text-left font-sans font-normal text-ink-3"
+                    >
+                      {r.label}
+                    </th>
+                    {status.metrics.map((m, i) => (
+                      <td key={m.date} className={`py-2 pl-3 text-right ${i === 0 ? "text-ink" : ""}`}>
+                        {r.render(m)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Section>
       )}
 
       {status && status.connected && status.metrics.length === 0 && status.todayCounts.length === 0 && (
-        <div className="panel animate-fade-up p-4 text-sm text-zinc-400">
+        <Notice tone="info" className="mt-10">
           已连接但还没有数据。确认手环已通过手机 Google Health App 同步上云后点“立即同步”。
-        </div>
+        </Notice>
       )}
+
+      <Disclosure className="mt-10 border-t border-line" summary="说明">
+        <div className="space-y-1.5 text-xs leading-relaxed text-ink-3">
+          <p>Fitbit Air → Google Health App → 云端 → 本应用。数据链路与踩坑记录见 docs/google-health-spike.md。</p>
+          <p>训记里的训练会镜像进训练记录(动作×组×次×重量),供恢复分析与计划生成使用。</p>
+        </div>
+      </Disclosure>
     </div>
   );
 }

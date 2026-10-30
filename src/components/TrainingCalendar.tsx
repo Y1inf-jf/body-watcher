@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 interface CalendarDay {
   log_id: number;
@@ -96,21 +97,25 @@ export default function TrainingCalendar() {
   }).length;
 
   return (
-    <div className="panel animate-fade-up p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">Training Calendar · 训练日历</h3>
+    <div className="animate-fade-up">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <h3 className="text-sm font-medium text-ink">训练日历</h3>
         {error && <span className="text-xs text-zone-red">{error}</span>}
-        <div className="flex items-center gap-2">
-          <button onClick={prevMonth} className="text-zinc-500 hover:text-zinc-300 text-sm px-1">&lt;</button>
-          <span className="text-sm text-zinc-300 w-24 text-center">{year}年{month}月</span>
-          <button onClick={nextMonth} className="text-zinc-500 hover:text-zinc-300 text-sm px-1">&gt;</button>
-          <span className="text-xs text-zinc-600 ml-2">{trainedCount}天训练 {restCount}天休息</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={prevMonth} className="btn btn-ghost btn-sm" aria-label="上个月">
+            <ChevronLeft size={16} />
+          </button>
+          <span className="w-24 text-center font-mono text-sm text-ink">{year}年{month}月</span>
+          <button onClick={nextMonth} className="btn btn-ghost btn-sm" aria-label="下个月">
+            <ChevronRight size={16} />
+          </button>
+          <span className="ml-2 text-xs text-ink-3">{trainedCount}天训练 {restCount}天休息</span>
         </div>
       </div>
 
       <div className="grid grid-cols-7 gap-1">
         {["日", "一", "二", "三", "四", "五", "六"].map((d) => (
-          <div key={d} className="text-xs text-zinc-600 text-center py-1">{d}</div>
+          <div key={d} className="py-1 text-center text-xs text-ink-3">{d}</div>
         ))}
         {cells.map((cell, i) => {
           const dayNum = i - firstDay + 1;
@@ -127,38 +132,34 @@ export default function TrainingCalendar() {
             <Link
               key={i}
               href={cell ? `/input?edit=${cell.log_id}` : `/input?date=${dateStr}`}
-              className={`text-center py-1 rounded text-xs min-h-[3rem] flex flex-col items-center justify-start pt-1 cursor-pointer hover:brightness-125 transition ${
-                cell
-                  ? "bg-zone-green/15 border border-zone-green/30"
-                  : isRest
-                  ? "bg-accent/10 border border-accent/25"
-                  : isCurrentDay
-                  ? "border border-white/25"
-                  : ""
-              }`}
+              className={`flex min-h-[2.75rem] flex-col items-center justify-start rounded-md pt-1 text-center text-xs transition-colors hover:bg-surface-2 sm:min-h-[3rem] ${
+                cell ? "bg-ink/10" : ""
+              } ${isCurrentDay ? "ring-1 ring-inset ring-ink-3" : ""}`}
             >
-              <span className={
-                cell ? "text-zone-green font-medium"
-                  : isRest ? "text-accent font-medium"
-                  : isCurrentDay ? "text-zinc-300"
-                  : "text-zinc-600"
-              }>
+              <span
+                className={
+                  cell ? "font-medium text-ink"
+                    : isRest ? "font-medium text-accent"
+                    : isCurrentDay ? "text-ink-2"
+                    : "text-ink-4"
+                }
+              >
                 {dayNum}
               </span>
               {cell && (
-                <span className="text-[10px] text-zone-green/70 mt-0.5 leading-tight">
+                <span className="mt-0.5 hidden text-[10px] leading-tight text-ink-2 sm:block">
                   {cell.muscle_groups.split(",").slice(0, 2).join(",")}
                 </span>
               )}
               {isRest && !cell && (
-                <span className="text-[10px] text-accent/80 mt-0.5">休息</span>
+                <span className="mt-0.5 hidden text-[10px] text-accent sm:block">休息</span>
               )}
             </Link>
           );
         })}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 mt-3 pt-2 border-t border-white/5">
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
         <input
           type="date"
           value={restDate}
@@ -166,24 +167,20 @@ export default function TrainingCalendar() {
             setRestDate(e.target.value);
             setRestMsg("");
           }}
-          className="rounded border border-white/10 bg-white/[0.04] px-2 py-1 text-xs text-zinc-200 [color-scheme:dark]"
+          className="field py-1.5"
         />
         <button
           onClick={toggleRestDay}
           disabled={busy || !restDate}
-          className={
-            isMarked
-              ? "text-xs rounded border border-white/15 bg-white/5 text-zinc-300 hover:bg-white/10 px-2 py-1 transition-colors disabled:opacity-40"
-              : "text-xs rounded border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 px-2 py-1 transition-colors disabled:opacity-40"
-          }
+          className="btn btn-secondary btn-sm"
         >
           {busy ? "保存中..." : isMarked ? "取消此日休息标记" : "标记为休息日"}
         </button>
-        <span className="text-[11px] text-zinc-600">可选任意日期补标/撤销</span>
+        <span className="text-xs text-ink-3">可选任意日期补标/撤销</span>
         {hasTraining && isMarked === false && (
-          <span className="text-[11px] text-zone-amber/80">该日已有训练记录</span>
+          <span className="text-xs text-zone-amber">该日已有训练记录</span>
         )}
-        {restMsg && <span className="text-[11px] text-accent/80">{restMsg}</span>}
+        {restMsg && <span className="text-xs text-accent">{restMsg}</span>}
       </div>
     </div>
   );
